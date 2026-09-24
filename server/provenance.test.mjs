@@ -1,0 +1,94 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from './app.mjs';
+
+test('starting context and review evidence preserve scoped, attributed submission history', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'common-ground-provenance-'));
+  const server = createApp({ filePath: join(folder, 'board.json') });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(folder, { recursive: true, force: true }); });
+  const request = async (path, { method = 'GET', json, cookie, token } = {}) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, { method, headers: { ...(json ? { 'content-type': 'application/json' } : {}), ...(cookie ? { cookie } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: json && JSON.stringify(json) });
+    return { status: response.status, cookie: response.headers.get('set-cookie')?.split(';')[0], data: await response.json() };
+  };
+  const owner = await request('/auth/register', { method: 'POST', json: { name: 'Owner', email: 'provenance@example.test', password: 'long-password-123', workspaceName: 'Studio' } });
+  const ws = owner.data.workspaces[0].id;
+  const own = (path, method = 'GET', json) => request(path, { method, json, cookie: owner.cookie });
+  const root = (await own(`/workspaces/${ws}/projects`, 'POST', { name: 'Product' })).data;
+  const other = (await own(`/workspaces/${ws}/projects`, 'POST', { name: 'Other' })).data;
+  const agent = async (name, rootProjectId) => (await own(`/workspaces/${ws}/agents`, 'POST', { name, rootProjectId })).data;
+  const builder = await agent('builder', root.id);
+  const peer = await agent('peer', root.id);
+  const outsider = await agent('outsider', other.id);
+  const as = (actor, path, method = 'GET', json) => request(path, { method, json, token: actor.token });
+  const startingPoint = { branch: ' main ', commit: 'a'.repeat(40), worktree: 'C:\\allowed-by-host-only' };
+  const job = (await own(`/projects/${root.id}/jobs`, 'POST', { title: 'Build', startingPoint })).data;
+  const path = `/jobs/${job.id}`;
+  assert.equal(job.startingPoint.branch, 'main');
+  assert.equal((await as(outsider, path)).status, 404);
+  assert.equal((await as(outsider, path, 'PATCH', { startingPoint: {} })).status, 404);
+  assert.equal((await as(peer, path, 'PATCH', { startingPoint: {} })).status, 403);
+  for (const bad of [null, [], { branch: 'a'.repeat(256) }, { commit: 12 }, { worktree: 'bad\npath' }]) {
+    assert.equal((await own(path, 'PATCH', { startingPoint: bad })).status, 400);
+  }
+  const reported = { branch: 'feature', commit: 'b'.repeat(40), worktree: 'C:\\worktree' };
+  const claimed = await as(builder, path + '/claim', 'POST', { startingPoint: reported });
+  assert.equal(claimed.status, 200);
+  assert.deepEqual(claimed.data.run.startingPoint, reported);
+  assert.equal(claimed.data.run.directions.branch, 'main');
+  assert.equal(claimed.data.run.startedBy.id, builder.agent.id);
+  assert.equal((await own(path, 'PATCH', { startingPoint: {} })).status, 409);
+  const evidence = { artifacts: [{ label: 'Review diff', target: 'javascript:untrusted-text-only' }], checks: [{ name: 'Tests', result: 'passed', detail: '12 assertions' }, { name: 'Deploy', result: 'not_run', detail: 'Owner handled' }], notes: '<script>not executed</script>' };
+  for (const invalid of [null, { checks: [{ name: 'Tests', result: 'maybe' }] }, { artifacts: Array(21).fill({ label: 'x', target: 'y' }) }, { notes: 1 }]) {
+    assert.equal((await as(builder, path + '/move', 'POST', { status: 'review', comment: 'Ready', reviewEvidence: invalid })).status, 400);
+    assert.equal((await own(path)).data.status, 'working');
+  }
+  assert.equal((await as(peer, path + '/move', 'POST', { status: 'review', comment: 'Spoof', reviewEvidence: evidence })).status, 403);
+  const submitted = (await as(builder, path + '/move', 'POST', { status: 'review', comment: 'Ready', reviewEvidence: evidence })).data;
+  assert.deepEqual(submitted.submission.reviewEvidence, evidence);
+  assert.deepEqual(submitted.submission.run, claimed.data.run);
+  assert.equal(submitted.submission.submittedBy.id, builder.agent.id);
+  assert.equal((await own(`/projects/${root.id}/needs-you`)).data.reviews[0].job.submission.id, submitted.submission.id);
+  await own(`/workspaces/${ws}/agents/${peer.agent.id}/reviewer`, 'PATCH', { canReview: true });
+  assert.deepEqual((await as(peer, `/projects/${root.id}/review-queue`)).data[0].submission.reviewEvidence, evidence);
+  const verdict = (await as(peer, path + '/move', 'POST', { status: 'working', comment: 'Add a test' })).data;
+  assert.equal(verdict.reviewDecision.submissionId, submitted.submission.id);
+  const next = (await as(builder, path + '/move', 'POST', { status: 'review', comment: 'Added test' })).data;
+  assert.equal(next.submissionHistory.length, 2);
+  assert.notEqual(next.submission.id, submitted.submission.id);
+  assert.equal(next.reviewHistory[0].submissionId, submitted.submission.id);
+  assert.deepEqual(next.submissionHistory[0], submitted.submission);
+  assert.deepEqual(next.submission.reviewEvidence, { artifacts: [], checks: [], notes: '' });
+  assert.equal(next.reviewDecision, undefined);
+  assert.equal((await own(path + '/move', 'POST', { status: 'completed', comment: 'Looks good', reviewEvidence: evidence })).status, 400);
+  await own(path + '/move', 'POST', { status: 'working', comment: 'Return' });
+  const reset = (await own(path + '/move', 'POST', { status: 'idea' })).data;
+  assert.equal(reset.run, undefined);
+  assert.equal(reset.submission, undefined);
+  await own(path, 'PATCH', { startingPoint: { branch: 'new-base' } });
+  const reclaim = (await as(builder, path + '/claim', 'POST', {})).data;
+  assert.equal(reclaim.run.startingPoint, null);
+  assert.equal(reclaim.runs.length, 2);
+  assert.equal(reclaim.runs[0].directions.branch, 'main');
+  assert.equal(reclaim.run.directions.branch, 'new-base');
+  assert.deepEqual(reclaim.submissionHistory[0], submitted.submission);
+  const legacy = (await own(`/projects/${root.id}/jobs`, 'POST', { title: 'No starting directions' })).data;
+  assert.deepEqual(legacy.startingPoint, { branch: '', commit: '', worktree: '' });
+  // Simulate a pre-feature record only inside this test's temporary JSON fixture.
+  const fixture = JSON.parse(await readFile(join(folder, 'board.json'), 'utf8'));
+  const old = fixture.jobs.find(item => item.id === legacy.id);
+  delete old.startingPoint;
+  old.status = 'working';
+  old.assignee = claimed.data.assignee;
+  const oldSubmission = { summary: 'Legacy evidence note', submittedBy: claimed.data.assignee, submittedAt: '2020-01-01T00:00:00.000Z' };
+  old.submission = oldSubmission;
+  await writeFile(join(folder, 'board.json'), JSON.stringify(fixture));
+  const oldReset = (await own(`/jobs/${legacy.id}/move`, 'POST', { status: 'idea' })).data;
+  assert.deepEqual(oldReset.submissionHistory, [oldSubmission]);
+  const oldClaim = await as(builder, `/jobs/${legacy.id}/claim`, 'POST', {});
+  assert.equal(oldClaim.status, 200);
+  assert.deepEqual(oldClaim.data.run.directions, { branch: '', commit: '', worktree: '' });
+});
