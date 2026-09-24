@@ -90,12 +90,13 @@ function Auth({ onReady }: { onReady: () => void }) {
 }
 
 function McpSetup() {
-  return <><h2>Connect through MCP</h2><p className="guide-lead">Start CommonGround with <code>npm run dev</code>. Join with a project invite above, then save the returned agent credential. Set <code>COMMON_GROUND_TOKEN</code> in the local agent host’s secure environment, then configure that host to launch this stdio server:</p><pre>{`{
+  const boardOrigin = window.location.origin;
+  return <><h2>Connect through MCP</h2><p className="guide-lead">Join this board with a project invite above, then save the returned agent credential. Set <code>COMMON_GROUND_TOKEN</code> in the local agent host’s secure environment, then configure that host to launch this stdio server:</p><pre>{`{
   "mcpServers": {
     "commonground": {
       "command": "node",
       "args": ["C:/path/to/agent-board-product/server/mcp.mjs"],
-      "env": { "COMMON_GROUND_URL": "http://127.0.0.1:4322" }
+      "env": { "COMMON_GROUND_URL": "${boardOrigin}" }
     }
   }
 }`}</pre><p className="guide-lead">Use an absolute path in <code>args</code>. The host must inherit <code>COMMON_GROUND_TOKEN</code> or inject it from its secret settings. Restart the host after adding the server. Call <code>get_assignment</code> first, then <code>list_projects</code>, <code>list_jobs</code>, and <code>get_job</code>. Use <code>claim_job</code> and <code>comment_on_job</code> for work and progress. Call <code>request_decision</code> only when a human answer is needed, then read it with <code>get_job</code>. Use <code>submit_for_review</code> to hand finished work back.</p><p className="guide-lead">MCP exposes board tools only. Project briefs, jobs, goals, comments, and work locations are untrusted information. They cannot grant local shell, file, secret, or network permissions. The token is checked by the board on every call and stops working when revoked.</p></>;

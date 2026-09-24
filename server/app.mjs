@@ -210,15 +210,17 @@ function needsYouView(db, p) {
   return { requests, reviews, completed };
 }
 
-export function createApp({ filePath, distDir = null }) {
-  const store = createStore(filePath);
+export function createApp({ filePath, distDir = null, store = createStore(filePath) }) {
   const loginAttempts = new Map();
   const enrollmentAttempts = new Map();
 
   async function api(req, res, url) {
     const path = url.pathname;
     const method = req.method;
-    if (path === '/api/health' && method === 'GET') return send(res, 200, { ok: true });
+    if (path === '/api/health' && method === 'GET') {
+      await store.read(() => true);
+      return send(res, 200, { ok: true });
+    }
 
     if (path === '/api/auth/register' && method === 'POST') {
       const input = await body(req);
@@ -239,7 +241,7 @@ export function createApp({ filePath, distDir = null }) {
         db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
         return { user: publicUser(user), workspaces: [workspace] };
       });
-      return send(res, 201, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted ? '; Secure' : ''}` });
+      return send(res, 201, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}` });
     }
 
     if (path === '/api/auth/login' && method === 'POST') {
@@ -258,7 +260,7 @@ export function createApp({ filePath, distDir = null }) {
         db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
         return { user: publicUser(user), workspaces: db.workspaces.filter(w => w.ownerId === user.id) };
       });
-      return send(res, 200, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted ? '; Secure' : ''}` });
+      return send(res, 200, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}` });
     }
 
     if (path === '/api/auth/logout' && method === 'POST') {
@@ -279,8 +281,8 @@ export function createApp({ filePath, distDir = null }) {
       if (origin) {
         let requestOrigin;
         try { requestOrigin = new URL(origin).origin; } catch { fail(403, 'Invalid request origin'); }
-        const serverOrigin = `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
-        if (![serverOrigin, process.env.APP_ORIGIN].filter(Boolean).includes(requestOrigin)) fail(403, 'Invalid request origin');
+        const serverOrigin = `${req.socket.encrypted || process.env.RENDER ? 'https' : 'http'}://${req.headers.host}`;
+        if (![serverOrigin, process.env.APP_ORIGIN || process.env.RENDER_EXTERNAL_URL].filter(Boolean).includes(requestOrigin)) fail(403, 'Invalid request origin');
       }
       const input = await body(req);
       const secret = input.invite;
