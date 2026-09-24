@@ -121,6 +121,14 @@ function actorFor(db, req) {
   const user = session && db.users.find(u => u.id === session.userId);
   return user ? { kind: 'user', id: user.id, name: user.name, handle: user.handle } : null;
 }
+function credentialHashes(req) {
+  if (req.headers.authorization !== undefined) {
+    const bearer = req.headers.authorization.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
+    return { agentTokenHash: bearer ? hash(bearer) : null, sessionTokenHash: null };
+  }
+  const sessionToken = cookie(req, 'sid');
+  return { agentTokenHash: null, sessionTokenHash: sessionToken ? hash(sessionToken) : null };
+}
 function requireActor(db, req) { const actor = actorFor(db, req); if (!actor) fail(401, 'Sign in or connect an agent'); return actor; }
 function workspace(db, actor, workspaceId) {
   const found = db.workspaces.find(w => w.id === workspaceId);
@@ -210,15 +218,17 @@ function needsYouView(db, p) {
   return { requests, reviews, completed };
 }
 
-export function createApp({ filePath, distDir = null, store = createStore(filePath) }) {
+export function createApp({ filePath, distDir = null, store: baseStore = createStore(filePath) }) {
   const loginAttempts = new Map();
   const enrollmentAttempts = new Map();
 
   async function api(req, res, url) {
     const path = url.pathname;
     const method = req.method;
+    let store = baseStore;
     if (path === '/api/health' && method === 'GET') {
-      await store.read(() => true);
+      if (store.health) await store.health();
+      else await store.read(() => true);
       return send(res, 200, { ok: true });
     }
 
@@ -337,8 +347,30 @@ export function createApp({ filePath, distDir = null, store = createStore(filePa
       return send(res, 201, value);
     }
 
-    const actor = await store.read(db => requireActor(db, req));
+    let actor = baseStore.resolveActor
+      ? await baseStore.resolveActor(credentialHashes(req))
+      : await store.read(db => requireActor(db, req));
+    if (!actor) fail(401, 'Sign in or connect an agent');
     csrf(req, actor);
+
+    // Credentials and reviewer grants can change while a request is waiting
+    // for the next database transaction. Resolve them again inside each
+    // operation so a revoked agent cannot write using an older actor snapshot.
+    const authorized = fn => db => {
+      actor = requireActor(db, req);
+      csrf(req, actor);
+      return fn(db);
+    };
+    const jobDetail = method === 'GET' && path.match(/^\/api\/jobs\/([^/]+)$/);
+    const goalDetail = method === 'GET' && path.match(/^\/api\/goals\/([^/]+)$/);
+    const readScope = jobDetail ? { commentJobId: jobDetail[1] }
+      : goalDetail ? { commentGoalId: goalDetail[1] }
+      : method === 'GET' && /^\/api\/projects\/[^/]+\/review-queue$/.test(path) ? {}
+      : { omitHeavy: true };
+    store = {
+      read: fn => baseStore.read(authorized(fn), readScope),
+      write: fn => baseStore.write(authorized(fn)),
+    };
 
     if (path === '/api/auth/me' && method === 'GET') return send(res, 200, await store.read(db => ({ actor, workspaces: db.workspaces.filter(w => actor.kind === 'user' ? w.ownerId === actor.id : w.id === actor.workspaceId) })));
     if (path === '/api/workspaces' && method === 'GET') return send(res, 200, await store.read(db => db.workspaces.filter(w => actor.kind === 'user' ? w.ownerId === actor.id : w.id === actor.workspaceId)));
@@ -738,12 +770,20 @@ export function createApp({ filePath, distDir = null, store = createStore(filePa
       const value = await store.write(db => { const j = job(db, actor, match[1]); let v = db.votes.find(v => v.jobId === j.id && v.voter.type === actor.kind && v.voter.id === actor.id); if (v) { v.value = input.value; v.reason = reason; v.updatedAt = now(); } else { v = { id: id(), jobId: j.id, voter: actorRef(actor), value: input.value, reason, updatedAt: now() }; db.votes.push(v); } event(db, actor, j.projectId, 'job.voted', `${input.value > 0 ? '+1' : '-1'} ${j.title}`, j.goalId, j.id); return v; });
       return send(res, 200, value);
     }
-    if ((match = path.match(/^\/api\/projects\/([^/]+)\/activity$/)) && method === 'GET') return send(res, 200, await store.read(db => { const p = project(db, actor, match[1]); const since = Number(url.searchParams.get('since') || 0); const branchIds = new Set([p.id, ...db.projects.filter(child => child.parentProjectId === p.id).map(child => child.id)]); return db.activity.filter(a => branchIds.has(a.projectId) && a.id > since).slice(0, 200); }));
-    if (path === '/api/mentions' && method === 'GET') return send(res, 200, await store.read(db => { const mentions = db.mentions.filter(m => m.recipientType === actor.kind && m.recipientId === actor.id); return { unread: mentions.filter(m => !m.readAt).length, mentions: mentions.slice(-100).reverse() }; }));
+    if ((match = path.match(/^\/api\/projects\/([^/]+)\/activity$/)) && method === 'GET') {
+      const since = Number(url.searchParams.get('since') || 0);
+      if (baseStore.listActivity) return send(res, 200, await baseStore.listActivity({ actor, ...credentialHashes(req), projectId: match[1], since }));
+      return send(res, 200, await store.read(db => { const p = project(db, actor, match[1]); const branchIds = new Set([p.id, ...db.projects.filter(child => child.parentProjectId === p.id).map(child => child.id)]); return db.activity.filter(a => branchIds.has(a.projectId) && a.id > since).slice(0, 200); }));
+    }
+    if (path === '/api/mentions' && method === 'GET') {
+      if (baseStore.listMentions) return send(res, 200, await baseStore.listMentions({ actor, ...credentialHashes(req) }));
+      return send(res, 200, await store.read(db => { const mentions = db.mentions.filter(m => m.recipientType === actor.kind && m.recipientId === actor.id); return { unread: mentions.filter(m => !m.readAt).length, mentions: mentions.slice(-100).reverse() }; }));
+    }
     if (path === '/api/mentions/read' && method === 'POST') {
       const input = await body(req);
       const ids = Array.isArray(input.ids) ? new Set(input.ids) : null;
-      await store.write(db => { for (const m of db.mentions) if (m.recipientType === actor.kind && m.recipientId === actor.id && (!ids || ids.has(m.id))) m.readAt = now(); });
+      if (baseStore.markMentionsRead) await baseStore.markMentionsRead({ actor, ...credentialHashes(req), ids, readAt: now() });
+      else await store.write(db => { for (const m of db.mentions) if (m.recipientType === actor.kind && m.recipientId === actor.id && (!ids || ids.has(m.id))) m.readAt = now(); });
       return send(res, 200, { ok: true });
     }
     if (path === '/api/mentions/wait' && method === 'GET') {
@@ -751,7 +791,9 @@ export function createApp({ filePath, distDir = null, store = createStore(filePa
       const since = String(url.searchParams.get('since') || '');
       const deadline = Date.now() + timeout * 1000;
       while (Date.now() < deadline) {
-        const mentions = await store.read(db => db.mentions.filter(m => m.recipientType === actor.kind && m.recipientId === actor.id && !m.readAt && (!since || m.createdAt > since)));
+        const mentions = baseStore.listMentions
+          ? (await baseStore.listMentions({ actor, ...credentialHashes(req), since, unreadOnly: true })).mentions
+          : await store.read(db => db.mentions.filter(m => m.recipientType === actor.kind && m.recipientId === actor.id && !m.readAt && (!since || m.createdAt > since)));
         if (mentions.length) return send(res, 200, { timedOut: false, mentions });
         await new Promise(resolve => setTimeout(resolve, 1000));
       }

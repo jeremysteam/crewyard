@@ -1,5 +1,8 @@
--- Apply manually in the SQL editor of a NEW, separate Supabase project.
--- Do not run this against any existing project or live database.
+-- LEGACY singleton schema. Existing CrewYard installations retain this table
+-- during the relational cutover. New relational installations use
+-- supabase-relational-schema.sql; existing installations then apply
+-- supabase-migrate-relational.sql manually after taking a backup.
+-- This file is retained for reference; do not reapply it during cutover.
 -- The board server uses a Postgres connection string; browsers and agents never
 -- receive it. No database migration runs when the application starts.
 

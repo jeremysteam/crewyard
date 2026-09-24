@@ -7,12 +7,14 @@ import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createApp } from './app.mjs';
+import { createStore } from './store.mjs';
 
 const execFile = promisify(execFileCallback);
 
-async function harness(t) {
+async function harness(t, makeStore) {
   const folder = await mkdtemp(join(tmpdir(), 'common-ground-test-'));
-  const server = createApp({ filePath: join(folder, 'board.json') });
+  const filePath = join(folder, 'board.json');
+  const server = createApp({ filePath, store: makeStore?.(filePath) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(folder, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -367,4 +369,35 @@ test('project briefs have legacy defaults and only the owner can edit them', asy
   assert.deepEqual((await request(`/api/projects/${projectId}`, { token: agent.data.token })).data.brief, brief);
   assert.deepEqual((await request(`/api/workspaces/${workspaceId}/projects`, { token: agent.data.token })).data[0].brief, brief);
   assert.equal((await request(`/api/projects/${projectId}/activity`, { cookie: owner.cookie })).data.some(item => item.action === 'project.brief_updated'), true);
+});
+
+test('revoking an agent while its write waits prevents the queued change', async t => {
+  let pauseNextWrite = false;
+  let releaseWrite;
+  let writeStarted;
+  const started = new Promise(resolve => { writeStarted = resolve; });
+  const request = await harness(t, filePath => {
+    const base = createStore(filePath);
+    return {
+      read: fn => base.read(fn),
+      write: fn => {
+        if (!pauseNextWrite) return base.write(fn);
+        pauseNextWrite = false;
+        writeStarted();
+        return new Promise(resolve => { releaseWrite = resolve; }).then(() => base.write(fn));
+      },
+    };
+  });
+  const owner = await request('/api/auth/register', { method: 'POST', json: { name: 'Owner', email: 'race@example.com', password: 'long-password-123' } });
+  const workspaceId = owner.data.workspaces[0].id;
+  const project = await request(`/api/workspaces/${workspaceId}/projects`, { method: 'POST', cookie: owner.cookie, json: { name: 'Race test' } });
+  const agent = await request(`/api/workspaces/${workspaceId}/agents`, { method: 'POST', cookie: owner.cookie, json: { name: 'race-agent', rootProjectId: project.data.id } });
+  const job = await request(`/api/projects/${project.data.id}/jobs`, { method: 'POST', cookie: owner.cookie, json: { title: 'Write test' } });
+  pauseNextWrite = true;
+  const pending = request(`/api/jobs/${job.data.id}/comments`, { method: 'POST', token: agent.data.token, json: { body: 'Should be rejected' } });
+  await started;
+  assert.equal((await request(`/api/workspaces/${workspaceId}/agents/${agent.data.agent.id}`, { method: 'DELETE', cookie: owner.cookie })).status, 200);
+  releaseWrite();
+  assert.equal((await pending).status, 401);
+  assert.equal((await request(`/api/jobs/${job.data.id}`, { cookie: owner.cookie })).data.comments.length, 0);
 });
