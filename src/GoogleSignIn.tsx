@@ -39,7 +39,6 @@ export function GoogleSignIn({ mode, dark, onSuccess, onError }: {
         if (!config.enabled || !config.clientId || !config.nonce) return;
         await loadGoogle();
         if (!active || !button.current || !window.google) return;
-        setEnabled(true);
         window.google.accounts.id.initialize({
           client_id: config.clientId,
           nonce: config.nonce,
@@ -52,14 +51,19 @@ export function GoogleSignIn({ mode, dark, onSuccess, onError }: {
             } catch (cause) { callbacks.current.onError((cause as Error).message); }
           },
         });
-        button.current.replaceChildren();
-        window.google.accounts.id.renderButton(button.current, {
-          theme: dark ? 'filled_black' : 'outline', size: 'large', text: mode === 'link' ? 'continue_with' : 'signin_with', width: mode === 'link' ? 200 : 250,
-        });
+        setEnabled(true);
       })
       .catch(cause => { if (active) callbacks.current.onError((cause as Error).message); });
     return () => { active = false; };
-  }, [mode, dark]);
+  }, [mode]);
+
+  useEffect(() => {
+    if (!enabled || !button.current || !window.google) return;
+    button.current.replaceChildren();
+    window.google.accounts.id.renderButton(button.current, {
+      theme: dark ? 'filled_black' : 'outline', size: 'large', text: mode === 'link' ? 'continue_with' : 'signin_with', width: mode === 'link' ? 200 : 250,
+    });
+  }, [enabled, dark, mode]);
 
   return <div className={`google-signin${enabled ? ' google-signin-ready' : ''}`}>
     {mode === 'link' && <small>Link Google to this CrewYard account</small>}
