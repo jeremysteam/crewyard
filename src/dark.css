@@ -1,0 +1,134 @@
+/* The light palette stays in styles.css. These overrides apply only to a dark preference. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --dark-bg: #111416;
+  --dark-sidebar: #191d20;
+  --dark-panel: #202528;
+  --dark-raised: #292f32;
+  --dark-input: #171b1e;
+  --dark-border: #3a4245;
+  --dark-text: #e9edee;
+  --dark-muted: #adb7b9;
+  --dark-faint: #8d999c;
+  --dark-accent: #a9db8e;
+  --dark-accent-bg: #2c3630;
+  background: var(--dark-bg);
+  color: var(--dark-text);
+}
+
+:root[data-theme='dark'] body,
+:root[data-theme='dark'] :is(.auth-page,.app-shell,.guide-page,.loading-screen,.main-wrap,.handoff-section) {
+  background: var(--dark-bg);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] * { border-color: var(--dark-border); }
+:root[data-theme='dark'] :is(button,input,textarea,select) { color: var(--dark-text); }
+:root[data-theme='dark'] :is(input,textarea,select)::placeholder { color: var(--dark-faint); }
+
+:root[data-theme='dark'] :is(.sidebar,.topbar,.guide-header,.auth-form-side,.modal,.drawer,.notifications-popover) {
+  background: var(--dark-sidebar);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(
+  .workspace-switch,.stat,.job-card,.activity-list,.feature-card,.project-brief,.work-locations,
+  .needs-overview>div,.needs-card,.needs-completed,.needs-completed-row,.handoff-record,
+  .preview-board,.preview-columns article,.endpoint-list,.mention-item,.token-box
+) {
+  background: var(--dark-panel);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(
+  .preview-columns,.project-brief-grid>div,.scope-proposal-card,.work-location,.work-locations-empty,
+  .feature-empty,.column-empty,.needs-empty,.needs-recommendation,.needs-summary,.handoff-recommendation,
+  .handoff-answer,.folder-row,.pairing-code,.token-result,.sidebar-agent-card,.guide-callout,
+  .agent-guide-link,.agent-access-row,.connected-agent,.folder-step,.scope-current-plan,
+  .project-description-expand p,.mention-item.unread
+) {
+  background: var(--dark-raised);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(
+  .auth-form input,.modal-form input,.modal-form textarea,.modal-form select,.move-note textarea,
+  .scope-proposal-fields textarea,.work-location-form input,.work-location-form select,
+  .agent-invite-options select,.agent-setup-message,.needs-response-label textarea,
+  .handoff-answer-form textarea,.drawer-compose,.drawer-compose textarea,.search-box input,
+  .folder-path-label input,.review-instructions-form textarea
+) {
+  background: var(--dark-input);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(.button-subtle,.goals-strip button,.vote-controls button,.connected-agent button,.agent-access-row button,.linked-folder>button) {
+  background: var(--dark-raised);
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(.button-subtle:hover,.goals-strip button:hover,.vote-controls button:hover,.needs-completed-row:hover,.icon-button:hover) {
+  background: #333b3e;
+  color: var(--dark-text);
+}
+:root[data-theme='dark'] :is(.side-nav button,.project-nav button,.sidebar-footer button,.sidebar-footer a,.icon-button,.tool-button,.crumbs button) {
+  color: var(--dark-muted);
+}
+:root[data-theme='dark'] :is(.side-nav button:hover,.project-nav button:hover,.sidebar-footer button:hover,.sidebar-footer a:hover,.side-nav button.active,.project-nav button.active) {
+  background: #29362d;
+  color: var(--dark-accent);
+}
+:root[data-theme='dark'] :is(.workspace-avatar,.project-icon,.auth-icon,.title-icon,.empty-orbit,.spark-icon,.feature-icon,.folder-row-icon,.folder-step>span,.linked-folder-icon,.needs-completed-check,.stat-icon.green,.side-count.needs-count) {
+  background: var(--dark-accent-bg);
+  color: var(--dark-accent);
+}
+:root[data-theme='dark'] :is(.stat-icon.lilac,.stat-icon.orange,.stat-icon.coral,.needs-section-icon.request,.needs-section-icon.review,.needs-section-icon.done) {
+  background: #32383b;
+}
+:root[data-theme='dark'] :is(.job-type,.status-pill,.status-working,.status-review,.status-completed,.needs-kind,.column-count,.section-title span) {
+  background: var(--dark-accent-bg);
+  color: var(--dark-accent);
+}
+:root[data-theme='dark'] :is(.status-working,.needs-kind.question) { background: #263a50; color: #a8c9ef; }
+:root[data-theme='dark'] :is(.status-review,.needs-kind.review) { background: #49342d; color: #edb39e; }
+:root[data-theme='dark'] :is(.needs-kind.blocker,.stat-icon.orange) { background: #443a26; color: #e8c486; }
+:root[data-theme='dark'] :is(.form-error,.connected-agent button:hover,.agent-access-row button:hover) { background: #452923; color: #f2b1a2; }
+
+:root[data-theme='dark'] :is(
+  .muted,.auth-top,.auth-note,.auth-bottom,.workspace-switch small,.sidebar-section-label,
+  .sidebar-section-head,.sidebar-empty,.sidebar-agent-card p,.profile small,.crumbs,
+  .page-title-row p,.stat small,.column-hint,.job-card>p,.card-date,.card-assignee,
+  .activity-entry p,.activity-entry small,.modal-copy,.field-hint,.drawer-breadcrumb,
+  .job-description,.comment p,.comment-meta span,.guide-lead,.guide-main ol,.guide-note,
+  .feature-card p,.feature-empty,.work-locations-heading p,.project-brief-heading p,
+  .project-brief-grid p,.scope-proposal-card>p,.scope-current-plan p,.needs-section-head p,
+  .needs-card-meta>span:last-child,.needs-context,.needs-summary p,.needs-byline,
+  .needs-completed-main small,.needs-completed-time,.handoff-record>p,.handoff-answer p
+) { color: var(--dark-muted); }
+:root[data-theme='dark'] :is(
+  .auth-form label,.modal-form label,.move-note,.column-heading strong,.activity-entry p strong,
+  .agent-guide-link strong,.agent-setup strong,.work-location strong,.project-brief-grid strong,
+  .scope-proposal-fields label,.scope-current-plan strong,.needs-overview strong,
+  .needs-response-label,.needs-completed-row,.endpoint-list code,.guide-main h1,.guide-main h2,
+  .guide-main h3,.preview-board,.preview-columns>div>small
+) { color: var(--dark-text); }
+:root[data-theme='dark'] :is(.text-button,.eyebrow,.page-eyebrow,.feature-card small,.folder-row strong,.agent-setup summary,.agent-access-guide,.needs-job-link,.guide-callout,.sidebar-agent-card button) {
+  color: var(--dark-accent);
+}
+:root[data-theme='dark'] .auth-art {
+  background: radial-gradient(circle at 82% 9%,#27342d 0,transparent 38%),linear-gradient(155deg,#151a1c 0%,#1c2224 63%,#23292a 100%);
+  color: #f5fbef;
+}
+:root[data-theme='dark'] .needs-hero {
+  background: radial-gradient(circle at 92% -20%,#37483a 0,transparent 35%),linear-gradient(135deg,#20272a,#2a3132);
+}
+:root[data-theme='dark'] .preview-board { box-shadow: 0 28px 65px #0009; }
+:root[data-theme='dark'] .preview-columns { background: #191e21; }
+:root[data-theme='dark'] .guide-main pre { background: #171d20; }
+:root[data-theme='dark'] .folder-command { background: #1b2224; }
+:root[data-theme='dark'] .toast { background: #2b3336; }
+:root[data-theme='dark'] .theme-toggle { border: 1px solid var(--dark-border); }
+
+.theme-toggle { flex: none; }
+.guide-actions { display: flex; align-items: center; gap: 10px; }
+.auth-top .theme-toggle { margin-right: auto; }
+:root[data-theme='dark'] .button-primary { color: #142813; border-color: #84bb64; }
+:root[data-theme='dark'] .auth-art :is(.hero-pill,.auth-hero p,.auth-art-foot) { color: #c1d2c3; }
+@media (max-width: 600px) {
+  .guide-actions { gap: 4px; }
+  .auth-top { flex-wrap: wrap; }
+}
