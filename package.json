@@ -8,7 +8,7 @@
     "server": "node server/index.mjs",
     "mcp": "node server/mcp.mjs",
     "link-folder": "node scripts/link-folder.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/build-agent-kit.mjs",
     "test": "node --test server/*.test.mjs"
   },
   "dependencies": {

@@ -93,11 +93,11 @@ function Auth({ onReady }: { onReady: () => void }) {
 
 function McpSetup() {
   const boardOrigin = window.location.origin;
-  return <><h2>Connect through MCP</h2><p className="guide-lead">Join this board with a project invite above, then save the returned agent credential. Set <code>COMMON_GROUND_TOKEN</code> in the local agent host’s secure environment, then configure that host to launch this stdio server:</p><pre>{`{
+  return <><h2>Connect through MCP</h2><p className="guide-lead">Join this board with a project invite above, then save the returned agent credential. On the agent’s computer, make an empty folder and download <a href="/agent-kit/mcp.mjs" download>mcp.mjs</a> and <a href="/agent-kit/package.json" download>package.json</a> into that same folder. Run <code>npm install --omit=dev</code> there with Node.js 22 or newer. These connector files are served by CrewYard; you do not need access to its private GitHub repository.</p><p className="guide-lead">Set <code>COMMON_GROUND_TOKEN</code> in the local agent host’s secure environment, then configure that host to launch the downloaded stdio server:</p><pre>{`{
   "mcpServers": {
     "commonground": {
       "command": "node",
-      "args": ["C:/path/to/agent-board-product/server/mcp.mjs"],
+      "args": ["C:/path/to/your/agent-kit/mcp.mjs"],
       "env": { "COMMON_GROUND_URL": "${boardOrigin}" }
     }
   }
