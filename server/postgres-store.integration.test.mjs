@@ -9,6 +9,27 @@ const when = () => new Date().toISOString();
 const owner = { type: 'user', id: 'adapter-owner', name: 'Owner', handle: 'owner' };
 const agent = { type: 'agent', id: 'adapter-agent', name: 'Agent', handle: 'agent' };
 
+integration('Google identity persists in its own table without changing a password account', async () => {
+  const store = createPostgresStore(connectionString);
+  await store.health();
+  const userId = 'google-integration-owner';
+  await store.write(db => {
+    db.users.push({ id: userId, name: 'Google Owner', handle: 'google-integration-owner',
+      email: 'google-integration@example.test', passwordHash: 'unchanged-password-hash', createdAt: when() });
+    db.authIdentities.push({ id: 'google-integration-identity', userId, provider: 'google',
+      subject: 'google-integration-subject', emailAtLink: 'google-integration@example.test', createdAt: when() });
+  });
+  await store.close();
+  const reopened = createPostgresStore(connectionString);
+  const snapshot = await reopened.read(db => ({
+    user: db.users.find(item => item.id === userId),
+    identity: db.authIdentities.find(item => item.subject === 'google-integration-subject'),
+  }));
+  assert.equal(snapshot.user.passwordHash, 'unchanged-password-hash');
+  assert.equal(snapshot.identity.userId, userId);
+  await reopened.close();
+});
+
 integration('relational adapter preserves claims, invites, histories, and indexed reads', async () => {
   const store = createPostgresStore(connectionString);
   await store.health();

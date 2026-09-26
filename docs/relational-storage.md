@@ -22,3 +22,11 @@ must not be used if any legacy collection contains records.
 Apply `supabase-relational-schema.sql` once. It creates all relational tables and seeds `board_private.activity_counter` with `next_id = 1`. Do not apply the legacy `supabase-schema.sql` or the state migration.
 
 The schema script adds named constraints and is intentionally a one-time script.
+
+## Google sign-in identity table
+
+The main schema includes `board_private.auth_identities` for new installations. On
+an existing CrewYard database, apply `supabase-google-auth.sql` manually before
+setting `GOOGLE_CLIENT_ID` or deploying the Google sign-in build. This table
+stores Google's stable account subject separately from CrewYard users. Existing
+password hashes, sessions, and workspaces are left intact.

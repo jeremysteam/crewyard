@@ -6,7 +6,7 @@ const actor = { type: 'agent', id: 'agent-1', name: 'Agent One', handle: 'agent-
 const owner = { type: 'user', id: 'user-1', name: 'Owner', handle: 'owner' };
 const when = '2026-09-23T12:00:00.000Z';
 const empty = () => ({
-  users: [], sessions: [], workspaces: [], agents: [], agentInvites: [],
+  users: [], authIdentities: [], sessions: [], workspaces: [], agents: [], agentInvites: [],
   projects: [], goals: [], jobs: [], jobRequests: [], scopeProposals: [],
   comments: [], votes: [], mentions: [], activity: [], folderPairings: [],
   folders: [], nextActivityId: 1,
@@ -66,6 +66,15 @@ test('row diff skips unchanged rows and updates only changed entities', () => {
   assert.deepEqual(diff.insert.map(change => change.table), ['activity']);
   assert.deepEqual(diff.update.map(change => change.table), ['jobs', 'comments']);
   assert.deepEqual(diff.delete, []);
+});
+
+test('Google identity is a separate relational row linked to its user', () => {
+  const before = populated();
+  const after = structuredClone(before);
+  after.authIdentities.push({ id: 'identity-1', userId: 'user-1', provider: 'google', subject: 'google-sub-1', emailAtLink: 'a@example.com', createdAt: when });
+  const diff = diffState(before, after);
+  assert.deepEqual(diff.insert.map(change => change.table), ['auth_identities']);
+  assert.deepEqual(hydrateState(flattenState(after), after.nextActivityId), after);
 });
 
 test('removing a work location deletes only its child row', () => {

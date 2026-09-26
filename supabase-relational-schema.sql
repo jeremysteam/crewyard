@@ -10,6 +10,16 @@ CREATE TABLE IF NOT EXISTS board_private.users (
  id text PRIMARY KEY, name text NOT NULL, handle text NOT NULL UNIQUE, email text NOT NULL UNIQUE,
  password_hash text NOT NULL, created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS board_private.auth_identities (
+ id text PRIMARY KEY,
+ user_id text NOT NULL REFERENCES board_private.users(id) ON DELETE CASCADE,
+ provider text NOT NULL CHECK (provider = 'google'),
+ subject text NOT NULL,
+ email_at_link text NOT NULL,
+ created_at timestamptz NOT NULL,
+ UNIQUE (provider, subject), UNIQUE (user_id, provider)
+);
+CREATE INDEX IF NOT EXISTS auth_identities_user_idx ON board_private.auth_identities(user_id);
 CREATE TABLE IF NOT EXISTS board_private.sessions (
  token_hash text PRIMARY KEY, user_id text NOT NULL REFERENCES board_private.users(id) ON DELETE CASCADE,
  expires_at timestamptz NOT NULL

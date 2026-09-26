@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual, cre
 import { promisify } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { OAuth2Client } from 'google-auth-library';
 import { createStore } from './store.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -14,6 +15,7 @@ const id = () => randomUUID();
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
 const token = () => randomBytes(32).toString('base64url');
+const googleVerifier = new OAuth2Client();
 const nameOk = (name) => /^[a-zA-Z][a-zA-Z0-9_-]{1,31}$/.test(name);
 const inviteOk = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
 const workLocationKinds = ['folder', 'link'];
@@ -84,6 +86,8 @@ function workLocationInput(value) {
   return { label, kind: value.kind, target };
 }
 const publicUser = (user) => ({ id: user.id, name: user.name, handle: user.handle, email: user.email });
+const sessionCookie = (req, value) => `sid=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}`;
+const googleNonceCookie = (req, value, age) => `gnonce=${value}; HttpOnly; SameSite=Lax; Path=/api/auth/google; Max-Age=${age}${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}`;
 const actorRef = (actor) => ({ type: actor.kind, id: actor.id, name: actor.name, handle: actor.handle });
 const sameActor = (a, b) => !!a && a.type === b.kind && a.id === b.id;
 
@@ -218,7 +222,10 @@ function needsYouView(db, p) {
   return { requests, reviews, completed };
 }
 
-export function createApp({ filePath, distDir = null, store: baseStore = createStore(filePath) }) {
+export function createApp({ filePath, distDir = null, store: baseStore = createStore(filePath), googleClientId = process.env.GOOGLE_CLIENT_ID || '', verifyGoogleToken = async (credential, audience) => {
+  const ticket = await googleVerifier.verifyIdToken({ idToken: credential, audience });
+  return ticket.getPayload();
+} }) {
   const loginAttempts = new Map();
   const enrollmentAttempts = new Map();
 
@@ -230,6 +237,68 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       if (store.health) await store.health();
       else await store.read(() => true);
       return send(res, 200, { ok: true });
+    }
+
+    if (path === '/api/auth/google/config' && method === 'GET') {
+      if (!googleClientId) return send(res, 200, { enabled: false });
+      const nonce = token();
+      return send(res, 200, { enabled: true, clientId: googleClientId, nonce }, {
+        'set-cookie': googleNonceCookie(req, nonce, 600),
+      });
+    }
+
+    if ((path === '/api/auth/google' || path === '/api/auth/google/link') && method === 'POST') {
+      if (!googleClientId) fail(404, 'Google sign-in is not configured');
+      const expectedOrigin = process.env.APP_ORIGIN || process.env.RENDER_EXTERNAL_URL || `${process.env.RENDER ? 'https' : 'http'}://${req.headers.host}`;
+      if (req.headers.origin !== new URL(expectedOrigin).origin) fail(403, 'Invalid request origin');
+      const input = await body(req);
+      const nonce = cookie(req, 'gnonce');
+      if (!nonce || !/^[A-Za-z0-9_-]{43}$/.test(nonce) || typeof input.credential !== 'string' || input.credential.length > 8192) fail(400, 'Start Google sign-in again');
+      let claims;
+      try { claims = await verifyGoogleToken(input.credential, googleClientId); }
+      catch { fail(401, 'Google sign-in could not be verified'); }
+      if (!claims || claims.nonce !== nonce || typeof claims.sub !== 'string' || !claims.sub || claims.email_verified !== true || typeof claims.email !== 'string' || !/^\S+@\S+\.\S+$/.test(claims.email)) fail(401, 'Google sign-in could not be verified');
+      const email = claims.email.toLowerCase();
+      if (email.length > 254 || claims.sub.length > 255) fail(401, 'Google sign-in could not be verified');
+      const identity = db => db.authIdentities.find(item => item.provider === 'google' && item.subject === claims.sub);
+
+      if (path.endsWith('/link')) {
+        const value = await store.write(db => {
+          const actor = requireActor(db, req);
+          csrf(req, actor);
+          if (actor.kind !== 'user') fail(403, 'Sign in to link Google');
+          const user = db.users.find(item => item.id === actor.id);
+          if (user.email !== email) fail(409, 'Use the Google account with this CrewYard email');
+          const existing = identity(db);
+          if (existing && existing.userId !== user.id) fail(409, 'Google account is linked elsewhere');
+          if (!existing && db.authIdentities.some(item => item.userId === user.id && item.provider === 'google')) fail(409, 'This CrewYard account already has Google sign-in');
+          if (!existing) db.authIdentities.push({ id: id(), userId: user.id, provider: 'google', subject: claims.sub, emailAtLink: email, createdAt: now() });
+          return { linked: true };
+        });
+        return send(res, 200, value, { 'set-cookie': googleNonceCookie(req, '', 0) });
+      }
+
+      const sessionToken = token();
+      const unavailablePassword = await passwordHash(token());
+      const value = await store.write(db => {
+        let user = identity(db) && db.users.find(item => item.id === identity(db).userId);
+        let created = false;
+        if (!user) {
+          if (db.users.some(item => item.email === email)) fail(409, 'Email already registered. Sign in with your password, then link Google.');
+          const name = String(claims.name || email.split('@')[0] || 'Google user').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 80) || 'Google user';
+          const baseHandle = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'owner';
+          let handle = baseHandle;
+          while (db.users.some(item => item.handle === handle)) handle = `${baseHandle.slice(0, 24)}-${randomBytes(2).toString('hex')}`;
+          user = { id: id(), name, handle, email, passwordHash: unavailablePassword, createdAt: now() };
+          db.users.push(user);
+          db.workspaces.push({ id: id(), name: `${name}'s workspace`.slice(0, 80), ownerId: user.id, createdAt: now() });
+          db.authIdentities.push({ id: id(), userId: user.id, provider: 'google', subject: claims.sub, emailAtLink: email, createdAt: now() });
+          created = true;
+        }
+        db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
+        return { user: publicUser(user), workspaces: db.workspaces.filter(w => w.ownerId === user.id), created };
+      });
+      return send(res, 200, value, { 'set-cookie': [sessionCookie(req, sessionToken), googleNonceCookie(req, '', 0)] });
     }
 
     if (path === '/api/auth/register' && method === 'POST') {
@@ -251,7 +320,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
         db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
         return { user: publicUser(user), workspaces: [workspace] };
       });
-      return send(res, 201, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}` });
+      return send(res, 201, value, { 'set-cookie': sessionCookie(req, sessionToken) });
     }
 
     if (path === '/api/auth/login' && method === 'POST') {
@@ -270,7 +339,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
         db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
         return { user: publicUser(user), workspaces: db.workspaces.filter(w => w.ownerId === user.id) };
       });
-      return send(res, 200, value, { 'set-cookie': `sid=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${req.socket.encrypted || process.env.RENDER ? '; Secure' : ''}` });
+      return send(res, 200, value, { 'set-cookie': sessionCookie(req, sessionToken) });
     }
 
     if (path === '/api/auth/logout' && method === 'POST') {

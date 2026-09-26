@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 const empty = () => ({
-  users: [], sessions: [], workspaces: [], agents: [], agentInvites: [], projects: [], goals: [],
+  users: [], authIdentities: [], sessions: [], workspaces: [], agents: [], agentInvites: [], projects: [], goals: [],
   jobs: [], jobRequests: [], scopeProposals: [], comments: [], votes: [], mentions: [], activity: [], folderPairings: [], folders: [], nextActivityId: 1,
 });
 

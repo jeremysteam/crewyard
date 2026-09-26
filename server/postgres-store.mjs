@@ -2,7 +2,7 @@ import postgres from 'postgres';
 
 // These names also define foreign-key-safe insertion order. Deletes run in reverse.
 const collections = [
-  ['users', 'users'], ['sessions', 'sessions'], ['workspaces', 'workspaces'],
+  ['users', 'users'], ['authIdentities', 'auth_identities'], ['sessions', 'sessions'], ['workspaces', 'workspaces'],
   ['projects', 'projects'], ['agentInvites', 'agent_invites'], ['agents', 'agents'],
   ['goals', 'goals'], ['jobs', 'jobs'], ['jobRequests', 'job_requests'],
   ['scopeProposals', 'scope_proposals'], ['comments', 'comments'], ['votes', 'votes'],
@@ -207,7 +207,10 @@ export function createPostgresStore(connectionString) {
   const sql = postgres(connectionString, { max: 3, prepare: false, ssl });
   return {
     close: () => sql.end(),
-    health: async () => { if ((await sql`SELECT 1 FROM board_private.activity_counter WHERE singleton = true`).length !== 1) throw new Error('Board database schema is missing; apply the reviewed SQL first'); },
+    health: async () => {
+      if ((await sql`SELECT 1 FROM board_private.activity_counter WHERE singleton = true`).length !== 1) throw new Error('Board database schema is missing; apply the reviewed SQL first');
+      await sql`SELECT 1 FROM board_private.auth_identities LIMIT 0`;
+    },
     resolveActor: async ({ agentTokenHash, sessionTokenHash } = {}) => {
       if (agentTokenHash) {
         const rows = await sql`SELECT id, name, workspace_id, root_project_id, can_review FROM board_private.agents WHERE token_hash = ${agentTokenHash} AND revoked_at IS NULL`;

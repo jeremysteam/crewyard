@@ -26,6 +26,12 @@ The Postgres adapter stores users, projects, goals, jobs, comments, agents, acti
 
 Render Free can sleep after 15 minutes idle; the first request after sleep may take about a minute. Supabase Free may pause when inactive. Arrange a backup before relying on it for important work. Keep this pilot limited to invited testers until hosted authentication, abuse controls, and recovery have been reviewed.
 
+## Optional Google sign-in
+
+Google sign-in uses a CrewYard-only Google web client ID. It does not use or change AICreatorU's Google Cloud project. For the existing CrewYard database, apply the reviewed [`supabase-google-auth.sql`](supabase-google-auth.sql) manually before enabling the feature. Then create a separate Google Cloud project and web OAuth client for CrewYard, authorize the CrewYard Render origin, and set its client ID as `GOOGLE_CLIENT_ID` in this service's private Render environment. The app uses Google's Identity Services button, verifies each ID token on the server, and retains CrewYard's existing session cookie. It does not need a Google client secret or request access to Drive, Gmail, or other Google data.
+
+Email/password login remains available. An existing CrewYard account with the same email must sign in with its password and use the Google link control before Google sign-in can access its workspace. Google sign-in never joins accounts by email alone. Keep the Google setting unset until the SQL is applied, then test both a new Google account and linking an existing CrewYard account before sharing it.
+
 ## What works
 
 - User registration, sign in, sessions, and a private workspace
