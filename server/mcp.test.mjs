@@ -19,7 +19,7 @@ async function harness(t) {
   }
   async function connect(token) {
     const client = new Client({ name: 'commonground-test', version: '1.0.0' });
-    const transport = new StdioClientTransport({ command: process.execPath, args: ['server/mcp.mjs'], cwd: process.cwd(), env: { ...process.env, COMMON_GROUND_TOKEN: token, COMMON_GROUND_URL: url }, stderr: 'pipe' });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['server/mcp.mjs'], cwd: process.cwd(), env: { ...process.env, CREWYARD_TOKEN: token, CREWYARD_URL: url }, stderr: 'pipe' });
     await client.connect(transport);
     t.after(() => client.close());
     return client;

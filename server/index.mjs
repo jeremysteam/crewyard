@@ -8,4 +8,4 @@ if (hosted && !process.env.DATABASE_URL) throw new Error('DATABASE_URL is requir
 const store = process.env.DATABASE_URL ? createPostgresStore(process.env.DATABASE_URL) : undefined;
 const server = createApp({ filePath: resolve(process.env.DATA_FILE || '.data/board.json'), distDir: resolve('dist'), store });
 const host = hosted ? '0.0.0.0' : '127.0.0.1';
-server.listen(port, host, () => console.log(`CommonGround listening on ${host}:${port}`));
+server.listen(port, host, () => console.log(`CrewYard listening on ${host}:${port}`));
