@@ -24,8 +24,8 @@ function loadGoogle() {
   return loading;
 }
 
-export function GoogleSignIn({ mode, onSuccess, onError }: {
-  mode: 'login' | 'link'; onSuccess: () => void; onError: (message: string) => void;
+export function GoogleSignIn({ mode, dark, onSuccess, onError }: {
+  mode: 'login' | 'link'; dark: boolean; onSuccess: () => void; onError: (message: string) => void;
 }) {
   const button = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onSuccess, onError });
@@ -54,12 +54,12 @@ export function GoogleSignIn({ mode, onSuccess, onError }: {
         });
         button.current.replaceChildren();
         window.google.accounts.id.renderButton(button.current, {
-          theme: 'outline', size: 'large', text: mode === 'link' ? 'continue_with' : 'signin_with', width: 250,
+          theme: dark ? 'filled_black' : 'outline', size: 'large', text: mode === 'link' ? 'continue_with' : 'signin_with', width: mode === 'link' ? 200 : 250,
         });
       })
       .catch(cause => { if (active) callbacks.current.onError((cause as Error).message); });
     return () => { active = false; };
-  }, [mode]);
+  }, [mode, dark]);
 
   return <div className={`google-signin${enabled ? ' google-signin-ready' : ''}`}>
     {mode === 'link' && <small>Link Google to this CrewYard account</small>}
