@@ -27,3 +27,30 @@
 .work-locations{background:#fff;border:1px solid #e7ede4;border-radius:12px;padding:20px;margin:18px 0;box-shadow:0 3px 15px #1b321008}.work-locations-heading{display:flex;align-items:start;justify-content:space-between;gap:16px}.work-locations-heading h2{font-size:17px;letter-spacing:-.04em;margin:5px 0}.work-locations-heading p{font-size:10px;color:#899886;margin:0 0 15px;line-height:1.5}.work-locations-empty{padding:15px;border:1px dashed #dce8d7;border-radius:8px;background:#fafcf9;font-size:11px;color:#82917e}.work-locations-list{display:grid;gap:8px}.work-location{display:flex;align-items:center;gap:11px;padding:11px;border:1px solid #e9eee6;border-radius:8px;background:#fafcf9}.work-location-icon{width:31px;height:31px;flex:none;display:grid;place-items:center;border-radius:7px;background:#eaf4e6;color:#68985b}.work-location>div{flex:1;min-width:0}.work-location strong,.work-location code,.work-location a{display:block}.work-location strong{font-size:11px;color:#40523b}.work-location strong small{font-weight:400;color:#869682}.work-location code,.work-location a{font-size:10px;color:#688b5e;overflow-wrap:anywhere;margin-top:4px}.work-location-remove{border:0;background:transparent;color:#9aa996;cursor:pointer}.work-location-remove:hover{color:#b65d4e}.work-location-form{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:14px;padding-top:14px;border-top:1px solid #e9eee6}.work-location-form label{font-size:10px;font-weight:700;color:#5d7059}.work-location-form input,.work-location-form select{display:block;width:100%;margin-top:6px;padding:9px;border:1px solid #dfe8dc;border-radius:7px;background:white;font:11px inherit}.work-location-target,.work-location-form>p,.work-location-form .form-error,.work-location-actions{grid-column:1/-1}.work-location-form>p{font-size:10px;color:#8b9987;margin:0}.work-location-actions{display:flex;gap:8px;justify-content:flex-end}@media(max-width:700px){.work-locations-heading{flex-direction:column}.work-location-form{grid-template-columns:1fr}}
 /* Google Identity Services renders its own sign-in button inside these containers. */
 .google-signin{display:none}.google-signin-ready{display:block}.google-signin small{display:block;margin-bottom:7px;color:#6d746a;font-size:11px}.auth-google{display:flex;flex-direction:column;align-items:center;gap:10px;margin:20px 0}.auth-google>span{color:#8d9389;font-size:12px}.sidebar-footer .google-signin{margin:0 0 12px}
+.coordination-nav { padding: 12px 12px 0; }
+.coordination-page { max-width: 1120px; margin: 0 auto; padding: 8px 0 60px; }
+.coordination-page h1 { margin: 8px 0 10px; }
+.coordination-page > p { max-width: 760px; line-height: 1.55; color: var(--text-secondary, #666); }
+.coordination-status { padding: 14px 18px; margin: 22px 0; border-radius: 12px; background: #e7f4e8; color: #22572c; font-weight: 700; }
+.coordination-status.is-paused { background: #fff0df; color: #834600; }
+.coordination-compose, .coordination-card, .coordination-list { border: 1px solid var(--border, #dededb); border-radius: 14px; background: var(--surface, #fff); padding: 20px; margin: 16px 0; }
+.coordination-compose { display: grid; gap: 14px; }
+.coordination-compose label { display: grid; gap: 7px; font-weight: 600; }
+.coordination-compose input:not([type="checkbox"]), .coordination-compose textarea, .coordination-compose select, .coordination-card select { width: 100%; min-width: 120px; padding: 10px 12px; border: 1px solid var(--border, #d7d7d3); border-radius: 8px; background: var(--surface, #fff); color: inherit; font: inherit; }
+.coordination-row { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; }
+.coordination-row > label { flex: 1 1 180px; }
+.coordination-row > div:first-child { flex: 1; }
+.coordination-check { display: inline-flex !important; align-items: center; gap: 8px !important; font-weight: 500 !important; }
+.coordination-feed { display: grid; gap: 8px; }
+.coordination-card { margin: 0; overflow-wrap: anywhere; }
+.coordination-card p { white-space: pre-wrap; line-height: 1.55; }
+.coordination-card small { color: var(--text-secondary, #666); margin-right: 12px; }
+.coordination-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.coordination-list { display: grid; gap: 8px; }
+.coordination-list button { display: grid; text-align: left; gap: 5px; border: 0; border-radius: 9px; padding: 10px; background: transparent; color: inherit; cursor: pointer; }
+.coordination-list button.active, .coordination-list button:hover { background: #edece8; }
+.coordination-list small { color: var(--text-secondary, #666); }
+.coordination-main { min-width: 0; }
+.coordination-answer { border-left: 3px solid #786ae5; padding: 5px 0 5px 14px; margin-top: 14px; }
+.coordination-panel { display: flex; flex-wrap: wrap; gap: 12px; }
+@media (max-width: 700px) { .coordination-layout { grid-template-columns: 1fr; } }

@@ -90,6 +90,85 @@ test('votes are unique per actor and mention inbox can be acknowledged', async t
   assert.equal((await request('/api/mentions', { token: agent.data.token })).data.unread, 0);
 });
 
+test('manager pause and assignment are enforced while agents can acknowledge announcements', async t => {
+  const request = await harness(t);
+  const owner = await request('/api/auth/register', { method: 'POST', json: { name: 'Owner', email: 'coord-owner@example.com', password: 'long-password-123', workspaceName: 'Team' } });
+  const workspaceId = owner.data.workspaces[0].id;
+  const project = await request(`/api/workspaces/${workspaceId}/projects`, { method: 'POST', cookie: owner.cookie, json: { name: 'Delivery' } });
+  const agents = [];
+  for (const name of ['manager', 'worker', 'other']) agents.push((await request(`/api/workspaces/${workspaceId}/agents`, { method: 'POST', cookie: owner.cookie, json: { name, rootProjectId: project.data.id } })).data);
+  const [manager, worker, other] = agents;
+  const job = await request(`/api/projects/${project.data.id}/jobs`, { method: 'POST', cookie: owner.cookie, json: { title: 'Build feature' } });
+  assert.equal((await request(`/api/workspaces/${workspaceId}/announcements`, { method: 'POST', token: manager.token, json: { kind: 'pause', body: 'Stop @allagents' } })).status, 403);
+  assert.equal((await request(`/api/workspaces/${workspaceId}/agents/${manager.agent.id}/manager`, { method: 'PATCH', token: manager.token, json: { canManage: true } })).status, 403);
+  assert.equal((await request(`/api/workspaces/${workspaceId}/agents/${manager.agent.id}/manager`, { method: 'PATCH', cookie: owner.cookie, json: { canManage: true } })).status, 200);
+  const assigned = await request(`/api/workspaces/${workspaceId}/announcements`, { method: 'POST', token: manager.token, json: { kind: 'assignment', body: '@worker take the open job', targetAgentId: worker.agent.id, jobId: job.data.id } });
+  assert.equal(assigned.status, 201);
+  assert.equal((await request(`/api/jobs/${job.data.id}/claim`, { method: 'POST', token: other.token })).status, 403);
+  assert.equal((await request('/api/mentions', { token: worker.token })).data.unread, 1);
+  const stopped = await request(`/api/workspaces/${workspaceId}/announcements`, { method: 'POST', token: manager.token, json: { kind: 'pause', body: 'Stop now @allagents' } });
+  assert.equal(stopped.status, 201);
+  assert.equal(stopped.data.message.receipts.length, 3);
+  assert.equal((await request(`/api/jobs/${job.data.id}/claim`, { method: 'POST', token: worker.token })).status, 423);
+  const ack = await request(`/api/workspaces/${workspaceId}/announcements/${stopped.data.message.id}/ack`, { method: 'POST', token: worker.token });
+  assert.equal(ack.status, 200);
+  assert.equal((await request(`/api/workspaces/${workspaceId}/announcements`, { token: worker.token })).data.messages.at(-1).receipts.find(item => item.agentId === worker.agent.id).readAt, ack.data.readAt);
+  assert.equal((await request(`/api/workspaces/${workspaceId}/announcements`, { method: 'POST', token: manager.token, json: { kind: 'resume', body: 'Keep going @allagents' } })).status, 201);
+  assert.equal((await request(`/api/jobs/${job.data.id}/claim`, { method: 'POST', token: worker.token })).status, 200);
+});
+
+test('blind meeting answers stay private until all submit and auto mode follows votes', async t => {
+  const request = await harness(t);
+  const owner = await request('/api/auth/register', { method: 'POST', json: { name: 'Owner', email: 'meeting-owner@example.com', password: 'long-password-123', workspaceName: 'Board' } });
+  const workspaceId = owner.data.workspaces[0].id;
+  const project = await request(`/api/workspaces/${workspaceId}/projects`, { method: 'POST', cookie: owner.cookie, json: { name: 'Research' } });
+  const agents = [];
+  for (const name of ['main', 'claude', 'kimi']) agents.push((await request(`/api/workspaces/${workspaceId}/agents`, { method: 'POST', cookie: owner.cookie, json: { name, rootProjectId: project.data.id } })).data);
+  const [main, claude, kimi] = agents;
+  const made = await request(`/api/workspaces/${workspaceId}/meetings`, { method: 'POST', cookie: owner.cookie, json: { title: 'Architecture', prompt: 'Which design?', mainAgentId: main.agent.id, participantIds: agents.map(agent => agent.agent.id), mode: 'blind' } });
+  assert.equal(made.status, 201);
+  const meetingId = made.data.id, roundId = made.data.rounds[0].id;
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: claude.token, json: { body: 'Use option A' } })).status, 201);
+  const hidden = await request(`/api/meetings/${meetingId}`, { token: kimi.token });
+  assert.equal(hidden.data.rounds[0].answerCount, 1);
+  assert.equal(hidden.data.rounds[0].responses.length, 0);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: main.token, json: { body: 'My independent view' } })).status, 201);
+  assert.equal((await request(`/api/meetings/${meetingId}`, { cookie: owner.cookie })).data.rounds[0].responses.length, 0);
+  await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: kimi.token, json: { body: 'Use option B' } });
+  assert.equal((await request(`/api/meetings/${meetingId}`, { token: claude.token })).data.rounds[0].stage, 'synthesis');
+  assert.equal((await request(`/api/meetings/${meetingId}`, { token: claude.token })).data.rounds[0].responses.length, 3);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: claude.token, json: { kind: 'synthesis', body: 'No' } })).status, 409);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: main.token, json: { kind: 'synthesis', body: 'A with one change' } })).status, 201);
+  await request(`/api/meetings/${meetingId}`, { method: 'PATCH', cookie: owner.cookie, json: { autoMode: true } });
+  for (const agent of agents) await request(`/api/meetings/${meetingId}/rounds/${roundId}/votes`, { method: 'POST', token: agent.token, json: { mode: agent === kimi ? 'open' : 'blind' } });
+  const next = await request(`/api/meetings/${meetingId}`, { token: main.token });
+  assert.equal(next.data.rounds.length, 2);
+  assert.equal(next.data.rounds[1].mode, 'blind');
+  assert.equal((await request('/api/meeting-memory', { method: 'PUT', token: claude.token, json: { body: 'Remember A' } })).status, 200);
+  assert.equal((await request('/api/meeting-memory', { token: claude.token })).data.body, 'Remember A');
+  assert.equal((await request('/api/meeting-memory', { token: claude.token })).data.history[0].answer, 'Use option A');
+  assert.equal((await request('/api/meeting-memory', { token: kimi.token })).data.body, '');
+});
+
+test('open rounds put the main agent last and targeted rounds hear one agent', async t => {
+  const request = await harness(t);
+  const owner = await request('/api/auth/register', { method: 'POST', json: { name: 'Owner', email: 'open-owner@example.com', password: 'long-password-123', workspaceName: 'Board' } });
+  const workspaceId = owner.data.workspaces[0].id;
+  const project = await request(`/api/workspaces/${workspaceId}/projects`, { method: 'POST', cookie: owner.cookie, json: { name: 'Research' } });
+  const main = (await request(`/api/workspaces/${workspaceId}/agents`, { method: 'POST', cookie: owner.cookie, json: { name: 'main', rootProjectId: project.data.id } })).data;
+  const panel = (await request(`/api/workspaces/${workspaceId}/agents`, { method: 'POST', cookie: owner.cookie, json: { name: 'panel', rootProjectId: project.data.id } })).data;
+  const made = await request(`/api/workspaces/${workspaceId}/meetings`, { method: 'POST', cookie: owner.cookie, json: { title: 'Open', prompt: 'What now?', mainAgentId: main.agent.id, participantIds: [main.agent.id, panel.agent.id], mode: 'open' } });
+  const meetingId = made.data.id, roundId = made.data.rounds[0].id;
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: main.token, json: { body: 'Too early' } })).status, 409);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: panel.token, json: { body: 'Panel view' } })).status, 201);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${roundId}/responses`, { method: 'POST', token: main.token, json: { body: 'Main view' } })).status, 201);
+  const targeted = await request(`/api/meetings/${meetingId}/rounds`, { method: 'POST', cookie: owner.cookie, json: { mode: 'targeted', targetAgentId: panel.agent.id, prompt: '@panel clarify' } });
+  assert.equal(targeted.status, 201);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${targeted.data.id}/responses`, { method: 'POST', token: main.token, json: { body: 'Not my turn' } })).status, 403);
+  assert.equal((await request(`/api/meetings/${meetingId}/rounds/${targeted.data.id}/responses`, { method: 'POST', token: panel.token, json: { body: 'Clarification' } })).status, 201);
+  assert.equal((await request(`/api/meetings/${meetingId}`, { cookie: owner.cookie })).data.rounds[1].stage, 'complete');
+});
+
 test('one-time folder pairing links a verified local directory without sharing files', async t => {
   const request = await harness(t);
   const owner = await request('/api/auth/register', { method: 'POST', json: { name: 'Folder Owner', email: 'folder@example.com', password: 'long-password-123', workspaceName: 'Folder workspace' } });

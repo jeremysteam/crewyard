@@ -6,8 +6,10 @@ const collections = [
   ['projects', 'projects'], ['agentInvites', 'agent_invites'], ['agents', 'agents'],
   ['goals', 'goals'], ['jobs', 'jobs'], ['jobRequests', 'job_requests'],
   ['scopeProposals', 'scope_proposals'], ['comments', 'comments'], ['votes', 'votes'],
-  ['mentions', 'mentions'], ['activity', 'activity'], ['folderPairings', 'folder_pairings'],
-  ['folders', 'folders'],
+  ['announcements', 'announcements'], ['mentions', 'mentions'], ['activity', 'activity'], ['folderPairings', 'folder_pairings'],
+  ['folders', 'folders'], ['meetings', 'meetings'],
+  ['meetingRounds', 'meeting_rounds'], ['meetingResponses', 'meeting_responses'],
+  ['meetingVotes', 'meeting_votes'], ['meetingMemories', 'meeting_memories'],
 ];
 const childTables = ['project_work_locations', 'agent_invite_redemptions', 'job_runs', 'job_submissions', 'job_review_decisions'];
 const tables = [...collections.map(([, table]) => table), ...childTables];
@@ -15,13 +17,14 @@ const actors = {
   projects: ['createdBy'], agent_invites: ['createdBy'], goals: ['createdBy'],
   jobs: ['assignee', 'createdBy'], job_requests: ['askedBy', 'respondedBy', 'cancelledBy'],
   scope_proposals: ['submittedBy', 'decidedBy'], comments: ['author'], votes: ['voter'],
-  mentions: ['from'], activity: ['actor'], job_runs: ['startedBy'],
+  mentions: ['from'], announcements: ['from'], activity: ['actor'], job_runs: ['startedBy'],
   job_submissions: ['submittedBy'], job_review_decisions: ['decidedBy'],
 };
 const jsonColumns = {
   projects: ['brief'], scope_proposals: ['brief', 'applied_brief'],
   jobs: ['starting_point'], job_runs: ['directions', 'starting_point'],
-  job_submissions: ['review_evidence'],
+  job_submissions: ['review_evidence'], announcements: ['receipts'],
+  meetings: ['participant_ids'], meeting_rounds: ['participant_ids'],
 };
 const nested = new Set(['workLocations', 'redemptions', 'run', 'runs', 'submission', 'submissionHistory', 'reviewDecision', 'reviewHistory']);
 const snake = key => key.replace(/[A-Z]/g, letter => '_' + letter.toLowerCase());
@@ -90,7 +93,7 @@ export function flattenState(state) {
 }
 
 export function hydrateState(rows, nextActivityId) {
-  const state = Object.fromEntries(collections.map(([name, table]) => [name, (rows[table] || []).map(row => decode(table, row))]));
+  const state = Object.fromEntries(collections.filter(([, table]) => rows[table] !== undefined).map(([name, table]) => [name, rows[table].map(row => decode(table, row))]));
   state.nextActivityId = Number(nextActivityId);
   const projects = new Map(state.projects.map(item => [item.id, item]));
   for (const item of state.projects) item.workLocations = [];
@@ -210,12 +213,17 @@ export function createPostgresStore(connectionString) {
     health: async () => {
       if ((await sql`SELECT 1 FROM board_private.activity_counter WHERE singleton = true`).length !== 1) throw new Error('Board database schema is missing; apply the reviewed SQL first');
       await sql`SELECT 1 FROM board_private.auth_identities LIMIT 0`;
+      await sql`SELECT paused FROM board_private.workspaces LIMIT 0`;
+      await sql`SELECT can_manage FROM board_private.agents LIMIT 0`;
+      await sql`SELECT assigned_agent_id FROM board_private.jobs LIMIT 0`;
+      await sql`SELECT announcement_id FROM board_private.mentions LIMIT 0`;
+      await sql`SELECT 1 FROM board_private.meeting_memories LIMIT 0`;
     },
     resolveActor: async ({ agentTokenHash, sessionTokenHash } = {}) => {
       if (agentTokenHash) {
-        const rows = await sql`SELECT id, name, workspace_id, root_project_id, can_review FROM board_private.agents WHERE token_hash = ${agentTokenHash} AND revoked_at IS NULL`;
+        const rows = await sql`SELECT id, name, workspace_id, root_project_id, can_review, can_manage FROM board_private.agents WHERE token_hash = ${agentTokenHash} AND revoked_at IS NULL`;
         const agent = rows[0];
-        return agent?.root_project_id ? { kind: 'agent', id: agent.id, name: agent.name, handle: agent.name, workspaceId: agent.workspace_id, rootProjectId: agent.root_project_id, canReview: agent.can_review === true } : null;
+        return agent?.root_project_id ? { kind: 'agent', id: agent.id, name: agent.name, handle: agent.name, workspaceId: agent.workspace_id, rootProjectId: agent.root_project_id, canReview: agent.can_review === true, canManage: agent.can_manage === true } : null;
       }
       if (sessionTokenHash) {
         const rows = await sql`SELECT u.id, u.name, u.handle FROM board_private.sessions s JOIN board_private.users u ON u.id = s.user_id WHERE s.token_hash = ${sessionTokenHash} AND s.expires_at > now()`;

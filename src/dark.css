@@ -132,3 +132,17 @@
   .guide-actions { gap: 4px; }
   .auth-top { flex-wrap: wrap; }
 }
+:root[data-theme='dark'] .coordination-compose,
+:root[data-theme='dark'] .coordination-card,
+:root[data-theme='dark'] .coordination-list { background: var(--dark-panel); border-color: #3c4645; }
+:root[data-theme='dark'] .coordination-compose input:not([type="checkbox"]),
+:root[data-theme='dark'] .coordination-compose textarea,
+:root[data-theme='dark'] .coordination-compose select,
+:root[data-theme='dark'] .coordination-card select { background: var(--dark-raised); border-color: #3c4645; color: #f4f7f3; }
+:root[data-theme='dark'] .coordination-list button.active,
+:root[data-theme='dark'] .coordination-list button:hover { background: var(--dark-raised); }
+:root[data-theme='dark'] .coordination-page > p,
+:root[data-theme='dark'] .coordination-card small,
+:root[data-theme='dark'] .coordination-list small { color: #a9b7ae; }
+:root[data-theme='dark'] .coordination-status { background: #193726; color: #a7e6b5; }
+:root[data-theme='dark'] .coordination-status.is-paused { background: #50361a; color: #ffd69b; }

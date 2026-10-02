@@ -3,7 +3,8 @@ import { dirname } from 'node:path';
 
 const empty = () => ({
   users: [], authIdentities: [], sessions: [], workspaces: [], agents: [], agentInvites: [], projects: [], goals: [],
-  jobs: [], jobRequests: [], scopeProposals: [], comments: [], votes: [], mentions: [], activity: [], folderPairings: [], folders: [], nextActivityId: 1,
+  jobs: [], jobRequests: [], scopeProposals: [], comments: [], votes: [], mentions: [], activity: [], folderPairings: [], folders: [],
+  announcements: [], meetings: [], meetingRounds: [], meetingResponses: [], meetingVotes: [], meetingMemories: [], nextActivityId: 1,
 });
 
 export function createStore(filePath) {

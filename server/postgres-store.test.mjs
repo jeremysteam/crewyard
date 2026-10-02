@@ -9,7 +9,7 @@ const empty = () => ({
   users: [], authIdentities: [], sessions: [], workspaces: [], agents: [], agentInvites: [],
   projects: [], goals: [], jobs: [], jobRequests: [], scopeProposals: [],
   comments: [], votes: [], mentions: [], activity: [], folderPairings: [],
-  folders: [], nextActivityId: 1,
+  folders: [], announcements: [], meetings: [], meetingRounds: [], meetingResponses: [], meetingVotes: [], meetingMemories: [], nextActivityId: 1,
 });
 
 function populated() {
@@ -75,6 +75,26 @@ test('Google identity is a separate relational row linked to its user', () => {
   const diff = diffState(before, after);
   assert.deepEqual(diff.insert.map(change => change.table), ['auth_identities']);
   assert.deepEqual(hydrateState(flattenState(after), after.nextActivityId), after);
+});
+
+test('coordination records round-trip through relational rows', () => {
+  const original = populated();
+  original.workspaces[0].paused = true;
+  original.agents[0].canManage = true;
+  original.jobs[0].assignedAgentId = 'agent-1';
+  original.announcements.push({ id: 'announcement-1', workspaceId: 'space-1', kind: 'pause', body: 'Stop',
+    targetAgentId: null, jobId: null, from: owner, receipts: [{ agentId: 'agent-1', readAt: null }], createdAt: when });
+  original.meetings.push({ id: 'meeting-1', workspaceId: 'space-1', title: 'Board', mainAgentId: 'agent-1',
+    participantIds: ['agent-1'], autoMode: false, status: 'active', createdAt: when, updatedAt: when });
+  original.meetingRounds.push({ id: 'round-1', meetingId: 'meeting-1', ordinal: 1, prompt: 'Question',
+    mode: 'blind', targetAgentId: null, participantIds: ['agent-1'], mainAgentId: 'agent-1',
+    stage: 'complete', createdAt: when, completedAt: when });
+  original.meetingResponses.push({ id: 'response-1', roundId: 'round-1', agentId: 'agent-1', kind: 'answer', body: 'Answer', createdAt: when });
+  original.meetingVotes.push({ id: 'vote-1', roundId: 'round-1', agentId: 'agent-1', mode: 'open', createdAt: when });
+  original.meetingMemories.push({ id: 'memory-1', workspaceId: 'space-1', agentId: 'agent-1', body: 'Note', updatedAt: when });
+  const rows = flattenState(original);
+  assert.deepEqual(rows.announcements[0].receipts, [{ agentId: 'agent-1', readAt: null }]);
+  assert.deepEqual(hydrateState(rows, original.nextActivityId), original);
 });
 
 test('removing a work location deletes only its child row', () => {

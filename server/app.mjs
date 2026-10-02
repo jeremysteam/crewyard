@@ -118,7 +118,7 @@ function actorFor(db, req) {
     const bearer = req.headers.authorization.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
     if (!bearer) return null;
     const agent = db.agents.find(a => a.tokenHash === hash(bearer) && !a.revokedAt);
-    return agent?.rootProjectId ? { kind: 'agent', id: agent.id, name: agent.name, handle: agent.name, workspaceId: agent.workspaceId, rootProjectId: agent.rootProjectId, canReview: agent.canReview === true } : null;
+    return agent?.rootProjectId ? { kind: 'agent', id: agent.id, name: agent.name, handle: agent.name, workspaceId: agent.workspaceId, rootProjectId: agent.rootProjectId, canReview: agent.canReview === true, canManage: agent.canManage === true } : null;
   }
   const sessionToken = cookie(req, 'sid');
   const session = sessionToken && db.sessions.find(s => s.tokenHash === hash(sessionToken) && Date.parse(s.expiresAt) > Date.now());
@@ -165,7 +165,7 @@ function event(db, actor, projectId, action, detail, goalId = null, jobId = null
 }
 function issueAgent(db, { workspaceId, rootProjectId, name, credential, inviteId = null }) {
   // Both enrollment paths meet here so a future workspace plan limit can be enforced once.
-  const agent = { id: id(), workspaceId, rootProjectId, name, tokenHash: hash(credential), inviteId, canReview: false, createdAt: now(), revokedAt: null };
+  const agent = { id: id(), workspaceId, rootProjectId, name, tokenHash: hash(credential), inviteId, canReview: false, canManage: false, createdAt: now(), revokedAt: null };
   db.agents.push(agent);
   return agent;
 }
@@ -220,6 +220,67 @@ function needsYouView(db, p) {
   const reviews = jobs.filter(j => j.status === 'review').map(item).sort((a, b) => b.job.updatedAt.localeCompare(a.job.updatedAt));
   const completed = jobs.filter(j => j.status === 'completed').map(item).sort((a, b) => b.job.updatedAt.localeCompare(a.job.updatedAt)).slice(0, 20);
   return { requests, reviews, completed };
+}
+
+function canManage(actor) { return actor.kind === 'user' || actor.canManage === true; }
+function meeting(db, actor, meetingId) {
+  const found = db.meetings.find(item => item.id === meetingId);
+  if (!found) fail(404, 'Meeting not found');
+  workspace(db, actor, found.workspaceId);
+  if (actor.kind === 'agent' && !found.participantIds.includes(actor.id) && !canManage(actor)) fail(404, 'Meeting not found');
+  return found;
+}
+function roundView(db, actor, round) {
+  const answers = db.meetingResponses.filter(item => item.roundId === round.id);
+  const revealed = round.stage === 'synthesis' || round.stage === 'complete';
+  return {
+    ...round,
+    answerCount: answers.filter(item => item.kind === 'answer').length,
+    responses: answers.filter(item => revealed || item.agentId === actor.id || round.mode === 'open' && item.kind === 'answer').map(item => ({ ...item })),
+    votes: round.stage === 'complete' ? db.meetingVotes.filter(item => item.roundId === round.id) : [],
+  };
+}
+function meetingMemoryView(db, actor) {
+  const body = db.meetingMemories.find(item => item.workspaceId === actor.workspaceId && item.agentId === actor.id)?.body || '';
+  const history = db.meetingResponses.filter(item => item.agentId === actor.id).slice(-10).map(item => {
+    const round = db.meetingRounds.find(entry => entry.id === item.roundId);
+    const found = db.meetings.find(entry => entry.id === round?.meetingId && entry.workspaceId === actor.workspaceId);
+    return found ? { meetingTitle: found.title, prompt: round.prompt, kind: item.kind, answer: item.body.slice(0, 2000), createdAt: item.createdAt } : null;
+  }).filter(Boolean);
+  return { body, history };
+}
+function meetingView(db, actor, found) {
+  const participants = found.participantIds.map(agentId => db.agents.find(agent => agent.id === agentId))
+    .filter(Boolean).map(agent => ({ id: agent.id, name: agent.name, rootProjectId: agent.rootProjectId, revokedAt: agent.revokedAt }));
+  return { ...found, participants, rounds: db.meetingRounds.filter(item => item.meetingId === found.id).map(item => roundView(db, actor, item)),
+    ...(actor.kind === 'agent' ? { myMemory: meetingMemoryView(db, actor) } : {}) };
+}
+function beginRound(db, found, { prompt, mode, targetAgentId = null }) {
+  if (!['open', 'blind', 'targeted'].includes(mode)) fail(400, 'Invalid round mode');
+  if (mode === 'targeted' && !found.participantIds.includes(targetAgentId)) fail(400, 'Choose a meeting participant');
+  if (mode !== 'targeted' && targetAgentId) fail(400, 'Target is only valid in a targeted round');
+  if (db.meetingRounds.some(item => item.meetingId === found.id && item.stage !== 'complete')) fail(409, 'Finish the current round first');
+  const round = { id: id(), meetingId: found.id, ordinal: db.meetingRounds.filter(item => item.meetingId === found.id).length + 1,
+    prompt, mode, targetAgentId, participantIds: mode === 'targeted' ? [targetAgentId] : [...found.participantIds],
+    mainAgentId: found.mainAgentId, stage: mode === 'targeted' ? 'target' : 'answers', createdAt: now(), completedAt: null };
+  db.meetingRounds.push(round);
+  return round;
+}
+function progressRound(db, found, round) {
+  const answered = agentId => db.meetingResponses.some(item => item.roundId === round.id && item.agentId === agentId && item.kind === 'answer');
+  if (round.mode === 'targeted' && answered(round.targetAgentId)) round.stage = 'complete';
+  if (round.mode === 'open' && round.stage === 'answers' && round.participantIds.filter(agentId => agentId !== round.mainAgentId).every(answered)) round.stage = 'main';
+  if (round.mode === 'blind' && round.stage === 'answers' && round.participantIds.every(answered)) round.stage = 'synthesis';
+  if (round.stage === 'complete' && !round.completedAt) round.completedAt = now();
+}
+function maybeAutoAdvance(db, found, round) {
+  if (!found.autoMode || round.stage !== 'complete') return;
+  if (db.meetingRounds.some(item => item.meetingId === found.id && item.ordinal > round.ordinal)) return;
+  const votes = db.meetingVotes.filter(item => item.roundId === round.id);
+  if (!round.participantIds.every(agentId => votes.some(vote => vote.agentId === agentId))) return;
+  const blind = votes.filter(vote => vote.mode === 'blind').length > votes.length / 2;
+  beginRound(db, found, { prompt: `Continue the discussion on: ${round.prompt}`, mode: blind ? 'blind' : 'open' });
+  found.updatedAt = now();
 }
 
 export function createApp({ filePath, distDir = null, store: baseStore = createStore(filePath), googleClientId = process.env.GOOGLE_CLIENT_ID || '', verifyGoogleToken = async (credential, audience) => {
@@ -428,6 +489,11 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
     const authorized = fn => db => {
       actor = requireActor(db, req);
       csrf(req, actor);
+      if ((method === 'POST' && (/^\/api\/workspaces\/[^/]+\/(announcements|meetings)$/.test(path) || /^\/api\/meetings\/[^/]+\/rounds$/.test(path))
+        || method === 'PATCH' && (/^\/api\/meetings\/[^/]+$/.test(path) || /^\/api\/meetings\/[^/]+\/participants$/.test(path))
+        || method === 'GET' && /^\/api\/workspaces\/[^/]+\/coordination-roster$/.test(path)) && !canManage(actor)) fail(403, 'Manager permission required');
+      if (!['GET', 'HEAD'].includes(method) && actor.kind === 'agent' && db.workspaces.find(w => w.id === actor.workspaceId)?.paused
+        && path !== '/api/mentions/read' && !/^\/api\/workspaces\/[^/]+\/announcements(?:\/[^/]+\/ack)?$/.test(path)) fail(423, 'Workspace paused by manager. Read announcements and wait for resume.');
       return fn(db);
     };
     const jobDetail = method === 'GET' && path.match(/^\/api\/jobs\/([^/]+)$/);
@@ -445,6 +511,239 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
     if (path === '/api/workspaces' && method === 'GET') return send(res, 200, await store.read(db => db.workspaces.filter(w => actor.kind === 'user' ? w.ownerId === actor.id : w.id === actor.workspaceId)));
 
     let match;
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/agents\/([^/]+)\/manager$/)) && method === 'PATCH') {
+      if (actor.kind !== 'user') fail(403, 'Only the workspace owner can grant manager access');
+      const input = await body(req);
+      if (typeof input.canManage !== 'boolean') fail(400, 'canManage must be true or false');
+      const value = await store.write(db => {
+        workspace(db, actor, match[1]);
+        const agent = db.agents.find(item => item.id === match[2] && item.workspaceId === match[1] && !item.revokedAt);
+        if (!agent) fail(404, 'Active agent not found');
+        agent.canManage = input.canManage;
+        const { tokenHash, ...safe } = agent;
+        return safe;
+      });
+      return send(res, 200, value);
+    }
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/coordination-roster$/)) && method === 'GET') {
+      if (!canManage(actor)) fail(403, 'Manager permission required');
+      return send(res, 200, await store.read(db => {
+        workspace(db, actor, match[1]);
+        const projects = db.projects.filter(item => item.workspaceId === match[1]);
+        return {
+          agents: db.agents.filter(item => item.workspaceId === match[1] && !item.revokedAt).map(item => ({ id: item.id, name: item.name, rootProjectId: item.rootProjectId })),
+          openJobs: db.jobs.filter(item => item.status === 'idea' && !item.assignee && projects.some(project => project.id === item.projectId))
+            .map(item => ({ id: item.id, title: item.title, projectId: item.projectId, rootProjectId: projects.find(project => project.id === item.projectId)?.parentProjectId || item.projectId, assignedAgentId: item.assignedAgentId || null })),
+        };
+      }));
+    }
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/announcements$/))) {
+      if (method === 'GET') return send(res, 200, await store.read(db => {
+        const w = workspace(db, actor, match[1]);
+        return { paused: w.paused === true, messages: db.announcements.filter(item => item.workspaceId === w.id).slice(-200) };
+      }));
+      if (method === 'POST') {
+        if (!canManage(actor)) fail(403, 'Manager permission required');
+        const input = await body(req);
+        const message = text(input.body, 'Message', 4000);
+        const kind = input.kind || 'message';
+        if (!['message', 'pause', 'resume', 'assignment'].includes(kind)) fail(400, 'Invalid announcement kind');
+        const value = await store.write(db => {
+          const w = workspace(db, actor, match[1]);
+          let target = null, assignedJob = null;
+          if (kind === 'assignment') {
+            target = db.agents.find(item => item.id === input.targetAgentId && item.workspaceId === w.id && !item.revokedAt);
+            if (!target) fail(400, 'Choose an active agent');
+            assignedJob = db.jobs.find(item => item.id === input.jobId && db.projects.some(p => p.id === item.projectId && p.workspaceId === w.id && (p.parentProjectId || p.id) === target.rootProjectId));
+            if (!assignedJob || assignedJob.status !== 'idea' || assignedJob.assignee) fail(409, 'Choose an open job in that agent’s project');
+            assignedJob.assignedAgentId = target.id;
+            assignedJob.updatedAt = now();
+            event(db, actor, assignedJob.projectId, 'job.assigned', assignedJob.title, assignedJob.goalId, assignedJob.id);
+          }
+          if (kind === 'pause') w.paused = true;
+          if (kind === 'resume') w.paused = false;
+          const all = input.notifyAll === true || /@allagents\b/i.test(message) || kind === 'pause' || kind === 'resume';
+          const names = new Set([...message.matchAll(/@([a-zA-Z][a-zA-Z0-9_-]{1,31})/g)].map(part => part[1].toLowerCase()));
+          const recipients = db.agents.filter(item => item.workspaceId === w.id && !item.revokedAt && (all || item.id === target?.id || names.has(item.name.toLowerCase())));
+          const item = { id: id(), workspaceId: w.id, kind, body: message, targetAgentId: target?.id || null, jobId: assignedJob?.id || null,
+            from: actorRef(actor), receipts: recipients.map(agent => ({ agentId: agent.id, readAt: null })), createdAt: now() };
+          db.announcements.push(item);
+          for (const agent of recipients) db.mentions.push({ id: id(), recipientType: 'agent', recipientId: agent.id, commentId: null,
+            announcementId: item.id, projectId: assignedJob?.projectId || agent.rootProjectId, goalId: null, jobId: assignedJob?.id || null,
+            from: actorRef(actor), readAt: null, createdAt: item.createdAt });
+          return { paused: w.paused === true, message: item };
+        });
+        return send(res, 201, value);
+      }
+    }
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/announcements\/([^/]+)\/ack$/)) && method === 'POST') {
+      if (actor.kind !== 'agent') fail(403, 'Only an agent can acknowledge an announcement');
+      const value = await store.write(db => {
+        workspace(db, actor, match[1]);
+        const item = db.announcements.find(message => message.id === match[2] && message.workspaceId === match[1]);
+        if (!item) fail(404, 'Announcement not found');
+        const receipt = item.receipts.find(entry => entry.agentId === actor.id);
+        if (!receipt) fail(403, 'Announcement was not addressed to this agent');
+        receipt.readAt ||= now();
+        return { id: item.id, readAt: receipt.readAt };
+      });
+      return send(res, 200, value);
+    }
+    if (path === '/api/meeting-memory' && actor.kind === 'agent') {
+      if (method === 'GET') return send(res, 200, await store.read(db => meetingMemoryView(db, actor)));
+      if (method === 'PUT') {
+        const input = await body(req);
+        const value = optionalText(input.body, 'Meeting memory', 12000);
+        return send(res, 200, await store.write(db => {
+          let item = db.meetingMemories.find(entry => entry.workspaceId === actor.workspaceId && entry.agentId === actor.id);
+          if (!item) { item = { id: id(), workspaceId: actor.workspaceId, agentId: actor.id, body: '', updatedAt: now() }; db.meetingMemories.push(item); }
+          item.body = value; item.updatedAt = now();
+          return { body: item.body, updatedAt: item.updatedAt };
+        }));
+      }
+    }
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/meetings$/))) {
+      if (method === 'GET') return send(res, 200, await store.read(db => {
+        workspace(db, actor, match[1]);
+        return db.meetings.filter(item => item.workspaceId === match[1] && (actor.kind === 'user' || item.participantIds.includes(actor.id) || canManage(actor)))
+          .map(item => ({ ...item, participants: item.participantIds.map(agentId => db.agents.find(agent => agent.id === agentId)).filter(Boolean).map(agent => ({ id: agent.id, name: agent.name })) }));
+      }));
+      if (method === 'POST') {
+        if (!canManage(actor)) fail(403, 'Manager permission required');
+        const input = await body(req);
+        const title = text(input.title, 'Meeting title', 160);
+        const prompt = text(input.prompt, 'Question', 8000);
+        const participantIds = input.participantIds;
+        if (!Array.isArray(participantIds) || participantIds.length < 2 || participantIds.length > 12 || new Set(participantIds).size !== participantIds.length || !participantIds.includes(input.mainAgentId)) fail(400, 'Choose a main agent and 1–11 distinct panel agents');
+        const value = await store.write(db => {
+          workspace(db, actor, match[1]);
+          if (participantIds.some(agentId => !db.agents.some(agent => agent.id === agentId && agent.workspaceId === match[1] && !agent.revokedAt))) fail(400, 'All participants must be active workspace agents');
+          const found = { id: id(), workspaceId: match[1], title, mainAgentId: input.mainAgentId, participantIds, autoMode: false, status: 'active', createdAt: now(), updatedAt: now() };
+          db.meetings.push(found);
+          beginRound(db, found, { prompt, mode: input.mode || 'blind' });
+          return meetingView(db, actor, found);
+        });
+        return send(res, 201, value);
+      }
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)$/))) {
+      if (method === 'GET') return send(res, 200, await store.read(db => meetingView(db, actor, meeting(db, actor, match[1]))));
+      if (method === 'PATCH') {
+        if (!canManage(actor)) fail(403, 'Manager permission required');
+        const input = await body(req);
+        return send(res, 200, await store.write(db => {
+          const found = meeting(db, actor, match[1]);
+          if (input.status !== undefined) {
+            if (!['active', 'closed'].includes(input.status)) fail(400, 'Invalid meeting status');
+            found.status = input.status;
+          }
+          if (input.autoMode !== undefined) {
+            if (typeof input.autoMode !== 'boolean') fail(400, 'autoMode must be true or false');
+            found.autoMode = input.autoMode;
+          }
+          found.updatedAt = now();
+          const last = db.meetingRounds.filter(item => item.meetingId === found.id).at(-1);
+          if (found.status === 'active' && last) maybeAutoAdvance(db, found, last);
+          return meetingView(db, actor, found);
+        }));
+      }
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)\/wait$/)) && method === 'GET') {
+      const since = url.searchParams.get('since') || '';
+      const timeout = Math.min(30, Math.max(1, Number(url.searchParams.get('timeout') || 20)));
+      const deadline = Date.now() + timeout * 1000;
+      while (true) {
+        const value = await store.read(db => meetingView(db, actor, meeting(db, actor, match[1])));
+        if (value.updatedAt !== since || Date.now() >= deadline) return send(res, 200, { timedOut: value.updatedAt === since, meeting: value });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)\/participants$/)) && method === 'PATCH') {
+      if (!canManage(actor)) fail(403, 'Manager permission required');
+      const input = await body(req);
+      return send(res, 200, await store.write(db => {
+        const found = meeting(db, actor, match[1]);
+        if (found.status !== 'active') fail(409, 'Meeting is closed');
+        const agent = db.agents.find(item => item.id === input.agentId && item.workspaceId === found.workspaceId && !item.revokedAt);
+        if (!agent) fail(400, 'Choose an active workspace agent');
+        if (input.action === 'set-main') {
+          if (!found.participantIds.includes(agent.id)) fail(400, 'Main agent must already be in the meeting');
+          found.mainAgentId = agent.id;
+        } else if (input.action === 'add') {
+          if (!found.participantIds.includes(agent.id)) {
+            if (found.participantIds.length >= 12) fail(409, 'Meeting is full');
+            found.participantIds.push(agent.id);
+          }
+        } else if (input.action === 'remove') {
+          if (agent.id === found.mainAgentId) fail(409, 'Choose a different main agent before removing this one');
+          found.participantIds = found.participantIds.filter(agentId => agentId !== agent.id);
+          const current = db.meetingRounds.filter(item => item.meetingId === found.id && item.stage !== 'complete').at(-1);
+          if (current) {
+            current.participantIds = current.participantIds.filter(agentId => agentId !== agent.id);
+            if (current.targetAgentId === agent.id) { current.stage = 'complete'; current.completedAt = now(); }
+            else progressRound(db, found, current);
+          }
+        } else fail(400, 'Action must be add, remove, or set-main');
+        found.updatedAt = now();
+        return meetingView(db, actor, found);
+      }));
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)\/rounds$/)) && method === 'POST') {
+      if (!canManage(actor)) fail(403, 'Manager permission required');
+      const input = await body(req);
+      const prompt = text(input.prompt, 'Round prompt', 8000);
+      return send(res, 201, await store.write(db => {
+        const found = meeting(db, actor, match[1]);
+        if (found.status !== 'active') fail(409, 'Meeting is closed');
+        const round = beginRound(db, found, { prompt, mode: input.mode || 'open', targetAgentId: input.targetAgentId || null });
+        found.updatedAt = now();
+        return roundView(db, actor, round);
+      }));
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)\/rounds\/([^/]+)\/responses$/)) && method === 'POST') {
+      if (actor.kind !== 'agent') fail(403, 'An agent connection is required');
+      const input = await body(req);
+      const answer = text(input.body, 'Response', 12000);
+      return send(res, 201, await store.write(db => {
+        const found = meeting(db, actor, match[1]);
+        if (found.status !== 'active') fail(409, 'Meeting is closed');
+        const round = db.meetingRounds.find(item => item.id === match[2] && item.meetingId === found.id);
+        if (!round) fail(404, 'Round not found');
+        if (!round.participantIds.includes(actor.id)) fail(403, 'You are not in this round');
+        const kind = input.kind || 'answer';
+        if (kind === 'synthesis') {
+          if (round.mode !== 'blind' || round.stage !== 'synthesis' || actor.id !== round.mainAgentId) fail(409, 'Main synthesis is not ready');
+        } else if (kind === 'answer') {
+          if (round.mode === 'targeted' && (round.stage !== 'target' || actor.id !== round.targetAgentId)) fail(409, 'This round is for one agent');
+          if (round.mode === 'open' && !(round.stage === 'answers' && actor.id !== round.mainAgentId || round.stage === 'main' && actor.id === round.mainAgentId)) fail(409, 'Wait for your turn');
+          if (round.mode === 'blind' && round.stage !== 'answers') fail(409, 'Blind submissions are closed');
+        } else fail(400, 'Invalid response kind');
+        if (db.meetingResponses.some(item => item.roundId === round.id && item.agentId === actor.id && item.kind === kind)) fail(409, 'Already responded');
+        const response = { id: id(), roundId: round.id, agentId: actor.id, kind, body: answer, createdAt: now() };
+        db.meetingResponses.push(response);
+        if (kind === 'synthesis' || round.mode === 'open' && actor.id === round.mainAgentId) { round.stage = 'complete'; round.completedAt = now(); }
+        else progressRound(db, found, round);
+        found.updatedAt = now();
+        return { response, round: roundView(db, actor, round) };
+      }));
+    }
+    if ((match = path.match(/^\/api\/meetings\/([^/]+)\/rounds\/([^/]+)\/votes$/)) && method === 'POST') {
+      if (actor.kind !== 'agent') fail(403, 'An agent connection is required');
+      const input = await body(req);
+      if (!['open', 'blind'].includes(input.mode)) fail(400, 'Vote for open or blind');
+      return send(res, 200, await store.write(db => {
+        const found = meeting(db, actor, match[1]);
+        const round = db.meetingRounds.find(item => item.id === match[2] && item.meetingId === found.id);
+        if (!round) fail(404, 'Round not found');
+        if (!round.participantIds.includes(actor.id) || round.stage !== 'complete') fail(409, 'Vote after completing your round');
+        let vote = db.meetingVotes.find(item => item.roundId === round.id && item.agentId === actor.id);
+        if (!vote) { vote = { id: id(), roundId: round.id, agentId: actor.id, mode: input.mode, createdAt: now() }; db.meetingVotes.push(vote); }
+        else vote.mode = input.mode;
+        found.updatedAt = now();
+        if (found.status === 'active') maybeAutoAdvance(db, found, round);
+        return meetingView(db, actor, found);
+      }));
+    }
     if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/agents$/))) {
       const workspaceId = match[1];
       if (method === 'GET') return send(res, 200, await store.read(db => { workspace(db, actor, workspaceId); return db.agents.filter(a => a.workspaceId === workspaceId && (actor.kind === 'user' || (!a.revokedAt && a.rootProjectId === actor.rootProjectId))).map(({ tokenHash, ...safe }) => safe); }));
@@ -729,7 +1028,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
     }
     if ((match = path.match(/^\/api\/jobs\/([^/]+)\/claim$/)) && method === 'POST') {
       const input = await body(req);
-      const value = await store.write(db => { const j = job(db, actor, match[1]); if (j.assignee) fail(409, `Already claimed by ${j.assignee.name}`); if (j.status !== 'idea' && j.status !== 'working') fail(409, 'This job cannot be claimed now'); j.run = { id: id(), directions: startingPointInput(j.startingPoint || {}), startingPoint: input.startingPoint === undefined ? null : startingPointInput(input.startingPoint), startedBy: actorRef(actor), startedAt: now() }; j.runs ||= []; j.runs.push(j.run); j.assignee = actorRef(actor); j.status = 'working'; j.updatedAt = now(); event(db, actor, j.projectId, 'job.claimed', j.title, j.goalId, j.id); return j; });
+      const value = await store.write(db => { const j = job(db, actor, match[1]); if (j.assignee) fail(409, `Already claimed by ${j.assignee.name}`); if (j.assignedAgentId && (actor.kind !== 'agent' || actor.id !== j.assignedAgentId)) fail(403, 'This job is assigned to another agent'); if (j.status !== 'idea' && j.status !== 'working') fail(409, 'This job cannot be claimed now'); j.run = { id: id(), directions: startingPointInput(j.startingPoint || {}), startingPoint: input.startingPoint === undefined ? null : startingPointInput(input.startingPoint), startedBy: actorRef(actor), startedAt: now() }; j.runs ||= []; j.runs.push(j.run); j.assignee = actorRef(actor); j.status = 'working'; j.updatedAt = now(); event(db, actor, j.projectId, 'job.claimed', j.title, j.goalId, j.id); return j; });
       return send(res, 200, value);
     }
     if ((match = path.match(/^\/api\/jobs\/([^/]+)\/requests$/)) && method === 'POST') {
