@@ -22,4 +22,4 @@ export type Comment = { id: string; projectId: string; goalId: string | null; jo
 export type Vote = { id: string; jobId: string; voter: Ref; value: 1 | -1; reason: string; updatedAt: string };
 export type Activity = { id: number; projectId: string; goalId: string | null; jobId: string | null; actor: Ref; action: string; detail: string; createdAt: string };
 export type Mention = { id: string; from: Ref; projectId: string; goalId: string | null; jobId: string | null; announcementId?: string | null; createdAt: string; readAt: string | null };
-export type Person = { type: 'user' | 'agent'; id: string; name: string; handle: string; rootProjectId?: string; createdAt?: string };
+export type Person = { type: 'user' | 'agent'; id: string; name: string; handle: string; rootProjectId?: string; canManage?: boolean; createdAt?: string };

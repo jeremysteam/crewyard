@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { api, patch, post } from './api';
 import { AgentAccess } from './AgentAccess';
-import { Avatar } from './Avatar';
+import { Avatar, AgentAvatarProvider } from './Avatar';
 import { AnnouncementsPage, MeetingsPage } from './Coordination';
 import { CoordinationGuide } from './CoordinationGuide';
 import { WorkLocations } from './WorkLocations';
@@ -190,7 +190,7 @@ function App() {
   if (location.pathname === '/guide') return <Guide dark={dark} onThemeToggle={toggleTheme} />;
   if (loading) return <div className="loading-screen"><span className="brand-mark"><LayoutGrid size={22} /></span><span>Opening your workspace…</span></div>;
   if (!me) return <Auth onReady={refreshMe} dark={dark} onThemeToggle={toggleTheme} />;
-  return <div className="app-shell">
+  return <AgentAvatarProvider managerIds={people.filter(person => person.type === 'agent' && person.canManage).map(person => person.id)}><div className="app-shell">
     {mobileNav && <div className="nav-scrim" onClick={() => setMobileNav(false)} />}
     <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
       <div className="sidebar-brand"><a href="/" className="brand"><span className="brand-mark"><LayoutGrid size={18} strokeWidth={2.7} /></span><span>CrewYard<span className="brand-dot">.</span></span></a><button className="icon-button mobile-close" onClick={() => setMobileNav(false)}><X size={18} /></button></div>
@@ -227,7 +227,7 @@ function App() {
     {selectedGoal && <GoalDrawer goal={selectedGoal} onClose={() => setSelectedGoal(null)} onAction={mutation} />}
     <Notifications mentions={mentions} onOpen={m => { if (m.announcementId) setView('announcements'); else if (m.jobId) void openJob(m.jobId); else if (m.goalId) void openGoal(m.goalId); }} onRead={async () => { await post('/mentions/read', {}); await refresh(); }} />
     {toast && <div className="toast"><span><Check size={15} /></span>{toast}<button onClick={() => setToast('')}><X size={14} /></button></div>}
-  </div>;
+  </div></AgentAvatarProvider>;
 }
 
 function NeedsYouPage({ root, inbox, onJob, onAction }: { root: Project | null; inbox: NeedsYou | null; onJob: (id: string) => void; onAction: (work: () => Promise<unknown>, success?: string) => Promise<boolean> }) {

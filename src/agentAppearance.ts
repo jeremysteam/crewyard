@@ -1,10 +1,8 @@
 // Keep this mapping stable: an agent's ID is its visual identity across every thread.
 export const agentDesignNames = [
-  'Orbit', 'Pixel', 'Nova', 'Scout', 'Echo',
-  'Bolt', 'Comet', 'Radar', 'Cosmo', 'Glitch',
-  'Luna', 'Atlas', 'Pip', 'Nimbus', 'Spark',
-  'Astro', 'Widget', 'Prism', 'Beacon', 'Pebble',
-  'Orbitron', 'Clover', 'Doodle', 'Rivet', 'Halo',
+  'Orbit', 'Scout', 'Radar', 'Luna', 'Pip', 'Widget', 'Beacon', 'Clover', 'Halo',
+  'Rex', 'Bronto', 'Triceratops', 'Stego', 'Raptor', 'Ptero', 'Anky', 'Para',
+  'Happy', 'Wink', 'Cool', 'Love', 'Goofy', 'Laugh', 'Wow', 'Cheeky',
 ] as const;
 
 function hashIdentity(value: string, salt: string) {
@@ -23,4 +21,9 @@ export function agentAppearance(identity: string) {
     background: `hsl(${hue} ${58 + (color >>> 9) % 19}% ${48 + (color >>> 17) % 12}%)`,
     accent: `hsl(${(hue + 28) % 360} 88% 79%)`,
   };
+}
+
+export const managerExpressions = ['Smug', 'Wink', 'Unimpressed', 'Laugh'] as const;
+export function managerAppearance(identity: string) {
+  return { ...agentAppearance(identity), expression: hashIdentity(identity, 'manager-expression') % managerExpressions.length };
 }

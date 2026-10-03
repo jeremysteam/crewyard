@@ -1167,7 +1167,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       }
       return send(res, 200, { timedOut: true, mentions: [] });
     }
-    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/people$/)) && method === 'GET') return send(res, 200, await store.read(db => { const w = workspace(db, actor, match[1]); return [db.users.find(u => u.id === w.ownerId)].filter(Boolean).map(u => ({ type: 'user', ...publicUser(u) })).concat(db.agents.filter(a => a.workspaceId === w.id && !a.revokedAt && (actor.kind === 'user' || a.rootProjectId === actor.rootProjectId)).map(a => ({ type: 'agent', id: a.id, rootProjectId: a.rootProjectId, name: a.name, handle: a.name, createdAt: a.createdAt }))); }));
+    if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/people$/)) && method === 'GET') return send(res, 200, await store.read(db => { const w = workspace(db, actor, match[1]); return [db.users.find(u => u.id === w.ownerId)].filter(Boolean).map(u => ({ type: 'user', ...publicUser(u) })).concat(db.agents.filter(a => a.workspaceId === w.id && !a.revokedAt && (actor.kind === 'user' || a.rootProjectId === actor.rootProjectId)).map(a => ({ type: 'agent', id: a.id, rootProjectId: a.rootProjectId, name: a.name, handle: a.name, canManage: a.canManage === true, createdAt: a.createdAt }))); }));
     fail(404, 'Endpoint not found');
   }
 

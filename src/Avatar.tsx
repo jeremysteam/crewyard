@@ -1,10 +1,12 @@
-import { agentAppearance } from './agentAppearance';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { agentAppearance, managerAppearance } from './agentAppearance';
+import { DinosaurPortrait, SmileyPortrait } from './CharacterPortraits';
 import './avatars.css';
 
 const ink = '#193139';
 const shell = '#f7f6e9';
 
-export function AgentPortrait({ design, background, accent }: { design: number; background: string; accent: string }) {
+function RobotPortrait({ design, background, accent }: { design: number; background: string; accent: string }) {
   const shape = Math.floor(design / 5);
   const face = design % 5;
   const head = [
@@ -41,10 +43,28 @@ export function AgentPortrait({ design, background, accent }: { design: number; 
   </svg>;
 }
 
-export function Avatar({ id, name, bot = false, size = 'normal' }: { id?: string; name: string; bot?: boolean; size?: 'normal' | 'small' | 'large' }) {
+export function AgentPortrait(props: { design: number; background: string; accent: string }) {
+  if (props.design < 9) return <RobotPortrait {...props} design={[0, 3, 7, 10, 12, 16, 18, 21, 24][props.design]} />;
+  if (props.design < 17) return <DinosaurPortrait {...props} design={props.design - 9} />;
+  return <SmileyPortrait {...props} design={props.design - 17} />;
+}
+
+const ManagerIds = createContext<ReadonlySet<string>>(new Set());
+export function AgentAvatarProvider({ managerIds, children }: { managerIds: string[]; children: ReactNode }) {
+  const value = useMemo(() => new Set(managerIds), [managerIds]);
+  return <ManagerIds.Provider value={value}>{children}</ManagerIds.Provider>;
+}
+
+export function ManagerPortrait({ expression, background }: { expression: number; background: string }) {
+  return <span className="manager-portrait-image" aria-hidden="true" style={{ backgroundColor: background, backgroundPosition: `${expression % 2 === 0 ? 0 : 100}% ${expression < 2 ? 0 : 100}%` }} />;
+}
+
+export function Avatar({ id, name, bot = false, manager, size = 'normal' }: { id?: string; name: string; bot?: boolean; manager?: boolean; size?: 'normal' | 'small' | 'large' }) {
+  const managerIds = useContext(ManagerIds);
+  const isManager = bot && (manager ?? managerIds.has(id || ''));
   const appearance = bot ? agentAppearance(id || name) : null;
   const initials = name.split(/[\s_-]+/).map(word => word[0]).slice(0, 2).join('').toUpperCase();
-  return <span className={`avatar ${bot ? 'avatar-bot agent-portrait' : ''} ${size === 'small' ? 'avatar-small' : size === 'large' ? 'avatar-large' : ''}`} title={name} role="img" aria-label={`${name}'s profile picture`}>
-    {appearance ? <AgentPortrait {...appearance} /> : initials}
+  return <span className={`avatar ${bot ? 'avatar-bot agent-portrait' : ''} ${isManager ? 'avatar-manager' : ''} ${size === 'small' ? 'avatar-small' : size === 'large' ? 'avatar-large' : ''}`} title={isManager ? `${name} · Manager` : name} role="img" aria-label={`${name}'s ${isManager ? 'manager' : 'profile'} picture`}>
+    {isManager ? <ManagerPortrait {...managerAppearance(id || name)} /> : appearance ? <AgentPortrait {...appearance} /> : initials}
   </span>;
 }
