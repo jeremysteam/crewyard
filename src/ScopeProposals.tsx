@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, post } from './api';
+import { Avatar } from './Avatar';
 import type { Project, ProjectBrief, ScopeProposal } from './types';
 
 const fields: { key: keyof ProjectBrief; label: string }[] = [
@@ -27,7 +28,7 @@ function Draft({ proposal, project, onChange }: { proposal: ScopeProposal; proje
     finally { setBusy(false); }
   }
   return <article className="scope-proposal-card">
-    <div className="scope-proposal-meta"><strong>Draft from {proposal.submittedBy.name}</strong><span>{new Date(proposal.createdAt).toLocaleDateString()}</span></div>
+    <div className="scope-proposal-meta"><strong className="author-with-avatar"><Avatar id={proposal.submittedBy.id} name={proposal.submittedBy.name} bot={proposal.submittedBy.type === 'agent'} size="small" />Draft from {proposal.submittedBy.name}</strong><span>{new Date(proposal.createdAt).toLocaleDateString()}</span></div>
     <p>Review and edit before applying. Applying updates the project brief and scope plan only; it does not create jobs, invite agents, or change work locations.</p>
     <div className="scope-proposal-fields">{fields.map(field => <label key={field.key}>{field.label}<textarea value={brief[field.key]} maxLength={4000} rows={3} onChange={e => setBrief(current => ({ ...current, [field.key]: e.target.value }))} /></label>)}
       <label>Feature and goal plan<textarea value={plan} maxLength={8000} rows={5} onChange={e => setPlan(e.target.value)} /></label>

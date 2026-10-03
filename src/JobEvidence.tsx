@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { patch } from './api';
+import { Avatar } from './Avatar';
 import type { Actor, Job, JobSubmission, ReviewEvidence, StartingPoint } from './types';
 
 export const emptyStartingPoint = (): StartingPoint => ({ branch: '', commit: '', worktree: '' });
@@ -26,5 +27,5 @@ export function EvidenceFields({ value, onChange }: { value: ReviewEvidence; onC
 
 export function SubmissionEvidence({ submission }: { submission: JobSubmission }) {
   const evidence = submission.reviewEvidence;
-  return <div style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}><p><small>Author-reported evidence · {submission.id ? `Submission ${submission.id.slice(0, 8)}` : 'Legacy submission'}</small></p>{submission.run ? <details><summary>Starting context for this submission</summary><p>Claimed by {submission.run.startedBy.name} · {new Date(submission.run.startedAt).toLocaleString()}</p><h4>Requested directions</h4><Point value={submission.run.directions} /><h4>Reported start</h4><Point value={submission.run.startingPoint} /></details> : <p>No starting context recorded.</p>}{evidence?.artifacts.map((item, i) => <p key={i}><b>{item.label}</b><br />{item.target}</p>)}{evidence?.checks.map((item, i) => <p key={i}><b>{item.name}: {item.result.replace('_', ' ')}</b><br />{item.detail}</p>)}{evidence?.notes && <p>{evidence.notes}</p>}{!evidence || (!evidence.artifacts.length && !evidence.checks.length && !evidence.notes) ? <p>No structured evidence supplied.</p> : null}</div>;
+  return <div style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}><p className="author-with-avatar"><Avatar id={submission.submittedBy.id} name={submission.submittedBy.name} bot={submission.submittedBy.type === 'agent'} size="small" /><small>{submission.submittedBy.name} · Author-reported evidence · {submission.id ? `Submission ${submission.id.slice(0, 8)}` : 'Legacy submission'}</small></p>{submission.run ? <details><summary>Starting context for this submission</summary><p>Claimed by {submission.run.startedBy.name} · {new Date(submission.run.startedAt).toLocaleString()}</p><h4>Requested directions</h4><Point value={submission.run.directions} /><h4>Reported start</h4><Point value={submission.run.startingPoint} /></details> : <p>No starting context recorded.</p>}{evidence?.artifacts.map((item, i) => <p key={i}><b>{item.label}</b><br />{item.target}</p>)}{evidence?.checks.map((item, i) => <p key={i}><b>{item.name}: {item.result.replace('_', ' ')}</b><br />{item.detail}</p>)}{evidence?.notes && <p>{evidence.notes}</p>}{!evidence || (!evidence.artifacts.length && !evidence.checks.length && !evidence.notes) ? <p>No structured evidence supplied.</p> : null}</div>;
 }
