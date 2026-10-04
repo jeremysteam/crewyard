@@ -137,3 +137,9 @@ npm run build
 ```
 
 The tests exercise invite expiry, replay, revocation, concurrent redemptions, scope isolation, invalid input and abuse limits, as well as claiming and review, parent rollups, voting, mentions, activity, folder pairing, and real MCP stdio calls against temporary board data.
+
+## Crew City
+
+Crew City is a separate visual tab for a project and its feature projects. Existing avatars have little animated bodies and legs and move between idea, working, review, and completed task stations. Manager avatars stroll through the plaza and approach explicitly mentioned agents, or the assignee of a job they comment on. New comment and decision events show speech bubbles; click one to open the actual thread. Earlier comments can be replayed from the Updates journal, with replay clearly labeled. Assignments remain the source of task placement; animation does not claim online presence or actual tool execution.
+
+The client reads existing project, roster, handoff, and paginated activity endpoints; no database migration or new write endpoint is needed. Activity polls every five seconds while the city is open, jobs follow the normal workspace refresh, and reconnecting is shown when reads fail. History is drained before live bubbles begin. Motion can be paused and respects the device reduced-motion preference. The map includes crew filters, name labels, zoom, and a wide view.
