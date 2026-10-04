@@ -47,3 +47,9 @@ assert.equal(new Set(visibleSites.map(item=>JSON.stringify(model.jobPoint(item,s
 const overflow=siteJobs.find(item=>!visibleSites.some(site=>site.id===item.id));
 assert.ok(!visibleSites.some(site=>JSON.stringify(model.jobPoint(site,siteJobs))===JSON.stringify(model.jobPoint(overflow,siteJobs))),'Overflow agents must not work at a different job building');
 console.log('Job construction checks passed: new arrivals, bounded plots, stable placement, and overflow separation.');
+const finishedCrew=Array.from({length:15},(_,i)=>person('finished-'+i));
+const finishedJobs=finishedCrew.map((item,i)=>job('completed-'+i,'completed',item.id));
+const finishedPoints=finishedCrew.map(item=>model.personPoint(item,finishedJobs,finishedCrew));
+assert.equal(new Set(finishedPoints.map(point=>JSON.stringify(point))).size,15,'Finished crew should not pile up at one overflow point');
+assert.ok(finishedPoints.every(point=>point.x>0&&point.x<95&&point.y>0&&point.y<98),'The finished crew should stay within the island');
+console.log('Completed crew overflow checks passed.');

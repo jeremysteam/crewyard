@@ -34,6 +34,11 @@ export function jobPoint(job: Job, jobs: Job[]): CityPoint {
   const slot = districtJobs.findIndex(item => item.id === job.id);
   if (slot < 0) {
     // Overflow jobs gather by their district, never on another job's building.
+    if (job.status === 'completed') {
+      const overflow = jobs.filter(item => item.status === job.status && !districtJobs.some(site => site.id === item.id)).sort((a, b) => a.id.localeCompare(b.id));
+      const place = Math.max(0, overflow.findIndex(item => item.id === job.id));
+      return { x: 57 + (place % 6) * 5.8, y: 82 + Math.floor(place / 6) * 6 };
+    }
     const district = cityDistricts.find(item => item.id === job.status)!;
     return { x: district.x - 3 + cityHash(job.id) % 7, y: district.y + 9 };
   }
