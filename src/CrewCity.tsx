@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ArrowRight, Check, ChevronLeft, ClipboardCheck, Coffee, Crown, Flag, Focus, Footprints, Hammer, Leaf, MessageCircle, Pause, Play, RotateCcw, Search, Sparkles, Users, X, ZoomIn, ZoomOut, CircleHelp } from 'lucide-react';
 import { api } from './api';
 import { Avatar } from './Avatar';
+import { CityJobSite } from './CityJobSite';
 import { agentAppearance } from './agentAppearance';
-import { agentJob, cityDistricts, cityHash, cityJobs, conversationTarget, eventLabel, isCityEvent, isConversation, jobPoint, mergeCityActivity, personPoint, type CityPoint } from './crewCityModel';
+import { agentJob, cityDistricts, cityHash, cityJobs, districtSiteJobs, conversationTarget, eventLabel, isCityEvent, isConversation, jobPoint, mergeCityActivity, personPoint, type CityPoint } from './crewCityModel';
 import type { Activity, Job, JobStatus, NeedsYou, Person, Project } from './types';
 import './crew-city.css';
 
@@ -32,13 +33,13 @@ function CityCharacter({ person, point, job, blocked, selected, names, motion, b
   const appearance = agentAppearance(person.id);
   const StatusIcon = blocked ? CircleHelp : person.canManage ? Crown : job ? icons[job.status] : Coffee;
   const status = blocked ? 'Needs a decision' : person.canManage ? 'Manager' : job ? stateName[job.status] : person.type === 'user' ? 'Workspace owner' : 'No active assignment';
-  return <div className={`city-character ${walking && motion ? 'is-walking' : ''} ${job?.status === 'working' && !blocked ? 'is-working' : ''} ${selected ? 'is-selected' : ''} ${person.canManage ? 'is-manager' : ''} ${blocked ? 'is-blocked' : ''}`}
+  return <div className={`city-character ${walking && motion ? 'is-walking' : ''} ${job?.status === 'working' && !blocked ? 'is-working' : ''} ${job && ['working', 'idea'].includes(job.status) ? 'works-west' : ''} ${selected ? 'is-selected' : ''} ${person.canManage ? 'is-manager' : ''} ${blocked ? 'is-blocked' : ''}`}
     style={{ left: `${position.x}%`, top: `${position.y}%`, zIndex: Math.round(position.y * 10) + (bubble ? 1000 : 0), '--bot-color': appearance.background, '--bot-accent': appearance.accent, '--bot-delay': `${cityHash(person.id) % 10 * -.2}s` } as CSSProperties}>
     {bubble && <button className={`city-speech ${bubble.replay ? 'is-replay' : ''}`} onClick={() => onConversation(bubble.event)} aria-label={`Open ${person.name}'s ${bubble.replay ? 'replayed' : 'new'} comment`} title={bubble.event.detail}>
       <span className="city-speech-label"><MessageCircle size={10} />{bubble.replay ? 'REPLAY' : 'NEW COMMENT'}</span><span>{bubble.event.detail.slice(0, 110)}{bubble.event.detail.length > 110 ? '…' : ''}</span>
     </button>}
     <button className="city-person" onClick={onSelect} aria-label={`${person.name} · ${status}${job ? ` · ${job.title}` : ''}`} aria-pressed={selected}>
-      <span className="city-person-shadow" /><span className="city-person-body"><span className="city-arm left" /><span className="city-arm right" /><span className="city-torso"><i /></span><span className="city-leg left" /><span className="city-leg right" /></span>
+      <span className="city-person-shadow" /><span className="city-person-body"><span className="city-arm left" /><span className="city-arm right" /><span className="city-torso"><i /></span><span className="city-work-tool" aria-hidden="true"><Hammer size={19} strokeWidth={2.5} /></span><span className="city-leg left" /><span className="city-leg right" /></span>
       <span className="city-person-head"><Avatar id={person.id} name={person.name} bot={person.type === 'agent'} manager={person.canManage} /></span>
       <span className="city-state-icon" title={status}><StatusIcon size={11} /></span>
       {(names || selected) && <span className="city-person-name">{person.name}</span>}
@@ -195,14 +196,14 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
         <div className="city-sunbeams" aria-hidden="true" /><div className="city-motes" aria-hidden="true"><i /><i /><i /><i /><i /></div>
         <span className="city-plaza-label">CREW PLAZA</span>
         {cityDistricts.map(district => { const Icon = icons[district.id]; return <button className={`city-district ${selection?.id === district.id ? 'active' : ''}`} key={district.id} style={{ left: `${district.x}%`, top: `${district.y}%`, '--district-color': district.color } as CSSProperties} onClick={() => setSelection({ kind: 'district', id: district.id })} aria-label={`${district.name}: ${jobs.filter(job => job.status === district.id).length} jobs`}><Icon size={14} /><span>{district.name}</span><b>{jobs.filter(job => job.status === district.id).length}</b></button>; })}
-        {cityDistricts.flatMap(district => jobs.filter(job => job.status === district.id).sort((a, b) => a.id.localeCompare(b.id)).slice(0, 6).map((job, index) => { const point = jobPoint(job, jobs); return <button key={job.id} className={`city-task-spot ${job.status} ${selection?.id === job.id ? 'active' : ''}`} style={{ left: `${point.x}%`, top: `${point.y}%` }} onClick={() => setSelection({ kind: 'job', id: job.id })} aria-label={`Task station: ${job.title}`} title={job.title}><span>{String(index + 1).padStart(2, '0')}</span><i /></button>; }))}
+        {cityDistricts.flatMap(district => districtSiteJobs(jobs, district.id).map(job => <CityJobSite key={job.id} job={job} point={jobPoint(job, jobs)} blocked={blockedIds.has(job.id)} selected={selection?.kind === 'job' && selection.id === job.id} fresh={time - Date.parse(job.createdAt) >= 0 && time - Date.parse(job.createdAt) < 60000} onSelect={() => setSelection({ kind: 'job', id: job.id })} />))}
         {visiblePeople.map(person => { const job = agentJob(person, jobs); return <CityCharacter key={person.id} person={person} point={pointFor(person)} job={job} blocked={!!job && blockedIds.has(job.id)} selected={selection?.kind === 'person' && selection.id === person.id} names={names} motion={effectiveMotion} bubble={activeBubbles[person.id]} onSelect={() => setSelection({ kind: 'person', id: person.id })} onConversation={openConversation} />; })}
         {!agentCount && <div className="city-empty-world"><Sparkles size={20} /><strong>A city waiting for its crew.</strong><span>Connect agents to this project and they’ll appear here.</span></div>}
         <div className="city-map-sign"><Footprints size={13} /><span>{Object.values(activeBubbles).some(bubble => bubble.replay) ? 'Replaying a recorded comment' : 'Little footsteps. Real milestones.'}</span></div>
       </div></div>
       <div className="city-map-bottom"><div className="city-legend"><span><Hammer size={12} /> Working</span><span><ClipboardCheck size={12} /> Review</span><span><CircleHelp size={12} /> Needs you</span><span><Crown size={12} /> Manager</span></div>
         <div className="city-zoom"><button aria-label="Zoom out city" disabled={zoom <= 1} onClick={() => setZoom(value => Math.max(1, value - .25))}><ZoomOut size={14} /></button><button aria-label="Reset city zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button><button aria-label="Zoom in city" disabled={zoom >= 1.75} onClick={() => setZoom(value => Math.min(1.75, value + .25))}><ZoomIn size={14} /></button></div>
-      </div><p className="city-disclaimer">Assignments and bubbles come from reported activity. Walking is decorative; it doesn’t indicate an agent is online.</p>
+      </div><p className="city-disclaimer">Job states and comments drive the city. Walking and construction are decorative; they don’t measure progress or show whether an agent is online.</p>
     </div>
     <aside className="city-inspector" aria-label="City crew and activity"><div className="city-panel-tabs"><button className={panel === 'crew' ? 'active' : ''} onClick={() => { setPanel('crew'); setSelection(null); }}><Users size={14} /> Crew</button><button className={panel === 'updates' ? 'active' : ''} onClick={() => { setPanel('updates'); setSelection(null); }}><MessageCircle size={14} /> Updates <small>{events.length}</small></button></div>
       {selection ? <div className="city-inspection"><button className="city-back" onClick={() => setSelection(null)}><ChevronLeft size={13} /> Back to {panel}</button>

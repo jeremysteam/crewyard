@@ -23,25 +23,39 @@ export function agentJob(person: Person, jobs: Job[]) {
   return jobs.filter(job => job.assignee?.id === person.id || job.assignedAgentId === person.id)
     .sort((a, b) => priority[a.status] - priority[b.status] || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))[0];
 }
+// Keep new jobs visible in the small plots; the district inspector holds the full list.
+export function districtSiteJobs(jobs: Job[], status: JobStatus) {
+  return jobs.filter(job => job.status === status)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+    .slice(0, 6).sort((a, b) => a.id.localeCompare(b.id));
+}
 export function jobPoint(job: Job, jobs: Job[]): CityPoint {
-  const districtJobs = jobs.filter(item => item.status === job.status).sort((a, b) => a.id.localeCompare(b.id));
-  const slot = Math.max(0, districtJobs.findIndex(item => item.id === job.id)) % 6;
-  const x = (job.status === 'working' || job.status === 'idea') ? 32 : 59;
+  const districtJobs = districtSiteJobs(jobs, job.status);
+  const slot = districtJobs.findIndex(item => item.id === job.id);
+  if (slot < 0) {
+    // Overflow jobs gather by their district, never on another job's building.
+    const district = cityDistricts.find(item => item.id === job.status)!;
+    return { x: district.x - 3 + cityHash(job.id) % 7, y: district.y + 9 };
+  }
+  const x = (job.status === 'working' || job.status === 'idea') ? 28 : 60;
   const y = (job.status === 'working' || job.status === 'review') ? 39 : 64;
-  return { x: x + (slot % 3) * 5.5, y: y + Math.floor(slot / 3) * 7 };
+  return { x: x + (slot % 3) * 8, y: y + Math.floor(slot / 3) * 10 };
 }
 export function personPoint(person: Person, jobs: Job[], people: Person[]): CityPoint {
   const job = agentJob(person, jobs);
   if (job) {
     const point = jobPoint(job, jobs);
     const hash = cityHash(person.id);
-    return { x: point.x + 1 + (hash % 3), y: point.y + 4 + (hash % 2) };
+    const side = job.status === 'working' || job.status === 'idea' ? -1 : 1;
+    return { x: point.x + side * (3.7 + (hash % 2) * .3), y: point.y + 5 + (hash % 2) };
   }
   if (person.canManage) return { x: 50, y: 29 };
   const idle = people.filter(item => !agentJob(item, jobs) && !item.canManage).sort((a, b) => a.id.localeCompare(b.id));
   const slot = Math.max(0, idle.findIndex(item => item.id === person.id));
   // Stagger extra rows across the open plaza instead of placing everyone on one point.
-  return { x: 37 + (slot % 7) * 4.3, y: 55 + Math.floor(slot / 7) * 7 };
+  if (slot < 14) return { x: 49 + (slot % 2) * 6, y: 38 + Math.floor(slot / 2) * 7 };
+  const overflow = slot - 14;
+  return { x: 40 + (overflow % 6) * 6, y: 86 + Math.floor(overflow / 6) * 6 };
 }
 export function conversationTarget(event: Activity, people: Person[], jobs: Job[]) {
   // Only explicit mentions, or the actual assignee of the commented job, imply a visit.
