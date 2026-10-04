@@ -7,6 +7,39 @@ export const cityDistricts: { id: JobStatus; name: string; label: string; x: num
   { id: 'idea', name: 'Idea garden', label: 'Open ideas', x: 20, y: 77, color: '#dfba51' },
   { id: 'completed', name: 'Done depot', label: 'Completed', x: 80, y: 82, color: '#65b69c' },
 ];
+
+// A conservative, convex outline of the illustrated pavement. Matching easing
+// on both coordinates keeps the entire segment between two stops on this ground.
+export const cityWalkableArea: readonly CityPoint[] = [
+  { x: 30, y: 34 }, { x: 67, y: 34 }, { x: 72, y: 44 },
+  { x: 60, y: 70 }, { x: 55, y: 77 }, { x: 45, y: 77 }, { x: 29, y: 51 },
+];
+export function isCityWalkable(point: CityPoint) {
+  return Number.isFinite(point.x) && Number.isFinite(point.y) && cityWalkableArea.every((a, index) => {
+    const b = cityWalkableArea[(index + 1) % cityWalkableArea.length];
+    return (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x) >= -1e-8;
+  });
+}
+export function cityWalkablePoint(point: CityPoint): CityPoint {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return { x: 50, y: 54 };
+  if (isCityWalkable(point)) return point;
+  let closest = { x: 50, y: 54 }, distance = Infinity;
+  cityWalkableArea.forEach((a, index) => {
+    const b = cityWalkableArea[(index + 1) % cityWalkableArea.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy)));
+    const candidate = { x: a.x + t * dx, y: a.y + t * dy };
+    const squared = (candidate.x - point.x) ** 2 + (candidate.y - point.y) ** 2;
+    if (squared < distance) { closest = candidate; distance = squared; }
+  });
+  return closest;
+}
+export function citySiteStand(person: Person, job: Job, jobs: Job[], secondSide = false): CityPoint {
+  const point = jobPoint(job, jobs);
+  const side = job.status === 'working' || job.status === 'completed' ? -1 : 1;
+  return cityWalkablePoint({ x: point.x + side * (3.7 + cityHash(person.id) % 2 * .3), y: point.y + (secondSide ? 7 : 5) + cityHash(person.id) % 2 });
+}
+
 export function cityHash(value: string) {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
@@ -33,34 +66,28 @@ export function jobPoint(job: Job, jobs: Job[]): CityPoint {
   const districtJobs = districtSiteJobs(jobs, job.status);
   const slot = districtJobs.findIndex(item => item.id === job.id);
   if (slot < 0) {
-    // Overflow jobs gather by their district, never on another job's building.
-    if (job.status === 'completed') {
-      const overflow = jobs.filter(item => item.status === job.status && !districtJobs.some(site => site.id === item.id)).sort((a, b) => a.id.localeCompare(b.id));
-      const place = Math.max(0, overflow.findIndex(item => item.id === job.id));
-      return { x: 57 + (place % 6) * 5.8, y: 82 + Math.floor(place / 6) * 6 };
-    }
-    const district = cityDistricts.find(item => item.id === job.status)!;
-    return { x: district.x - 3 + cityHash(job.id) % 7, y: district.y + 9 };
+    const overflow = jobs.filter(item => item.status === job.status && !districtJobs.some(site => site.id === item.id)).sort((a, b) => a.id.localeCompare(b.id));
+    const place = Math.max(0, overflow.findIndex(item => item.id === job.id));
+    // Extra jobs use inland staging spots rather than the depot's cliff edge.
+    return cityWalkablePoint({ x: 42 + (place % 5) * 4.8, y: 54 + Math.floor(place / 5) * 5 });
   }
-  const x = (job.status === 'working' || job.status === 'idea') ? 28 : 60;
-  const y = (job.status === 'working' || job.status === 'review') ? 39 : 64;
-  return { x: x + (slot % 3) * 8, y: y + Math.floor(slot / 3) * 10 };
+  const row = Math.floor(slot / 3), column = slot % 3;
+  const plots = {
+    working: { x: row ? 36 : 34, y: row ? 48 : 39, spacing: 6 },
+    review: { x: row ? 53 : 54, y: row ? 48 : 39, spacing: row ? 5 : 6 },
+    idea: { x: row ? 40 : 34, y: row ? 67 : 59, spacing: 5 },
+    completed: { x: row ? 52 : 58, y: row ? 67 : 58, spacing: 5 },
+  };
+  const plot = plots[job.status];
+  return cityWalkablePoint({ x: plot.x + column * plot.spacing, y: plot.y });
 }
 export function personPoint(person: Person, jobs: Job[], people: Person[]): CityPoint {
   const job = agentJob(person, jobs);
-  if (job) {
-    const point = jobPoint(job, jobs);
-    const hash = cityHash(person.id);
-    const side = job.status === 'working' || job.status === 'idea' ? -1 : 1;
-    return { x: point.x + side * (3.7 + (hash % 2) * .3), y: point.y + 5 + (hash % 2) };
-  }
-  if (person.canManage) return { x: 50, y: 29 };
+  if (job) return citySiteStand(person, job, jobs);
+  if (person.canManage) return { x: 50, y: 34 };
   const idle = people.filter(item => !agentJob(item, jobs) && !item.canManage).sort((a, b) => a.id.localeCompare(b.id));
   const slot = Math.max(0, idle.findIndex(item => item.id === person.id));
-  // Stagger extra rows across the open plaza instead of placing everyone on one point.
-  if (slot < 14) return { x: 49 + (slot % 2) * 6, y: 38 + Math.floor(slot / 2) * 7 };
-  const overflow = slot - 14;
-  return { x: 40 + (overflow % 6) * 6, y: 86 + Math.floor(overflow / 6) * 6 };
+  return cityWalkablePoint({ x: 40 + (slot % 5) * 4.5, y: 43 + Math.floor(slot / 5) * 6 });
 }
 export function conversationTarget(event: Activity, people: Person[], jobs: Job[]) {
   // Only explicit mentions, or the actual assignee of the commented job, imply a visit.

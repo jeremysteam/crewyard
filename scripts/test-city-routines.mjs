@@ -47,3 +47,27 @@ assert.deepEqual(cityRoutine(owner,jobs,people,blocked,0),cityRoutine(owner,jobs
 assert.ok([...sequence,...rounds,...idle].every(step=>step.point.x>=12&&step.point.x<=90&&step.point.y>=30&&step.point.y<=95),'Routines should remain on the map');
 assert.deepEqual(cityRoutine(worker,jobs,people,blocked,42),cityRoutine(worker,jobs,people,blocked,42),'A paused routine clock should preserve its exact pose');
 console.log('City routine checks passed: motion, actual assignment rotation, blockers, honest job states, manager rounds, idle strolls, unchanged data, and map bounds.');
+
+const ground=load('crewCityModel');
+assert.equal(ground.isCityWalkable({x:84,y:94}),false,'The reported waterfront location must be excluded from walking ground');
+assert.equal(ground.isCityWalkable({x:55,y:95}),false,'The front cliff is not pavement even though it is inside the image');
+assert.ok(ground.isCityWalkable(ground.cityWalkablePoint({x:84,y:94})),'An old waterfront stop must be relocated onto pavement');
+const crowded=Array.from({length:28},(_,i)=>({...worker,id:'crew-'+i}));
+for(const status of ['idea','working','review','completed']){
+  const crowdedJobs=crowded.map((person,i)=>job('crowded-'+i,status,person));
+  for(const person of crowded){
+    let previous;
+    for(let second=0;second<90;second++){
+      const point=cityRoutine(person,crowdedJobs,crowded,new Set(),second).point;
+      assert.ok(ground.isCityWalkable(point),'Crowded '+status+' stops must stay on pavement');
+      if(previous)for(let frame=0;frame<=10;frame++){
+        const progress=frame/10;
+        assert.ok(ground.isCityWalkable({x:previous.x+(point.x-previous.x)*progress,y:previous.y+(point.y-previous.y)*progress}),'Movement between stops must never cross off the pavement');
+      }
+      previous=point;
+    }
+  }
+}
+assert.ok(idle.every(step=>ground.isCityWalkable(step.point))&&rounds.every(step=>ground.isCityWalkable(step.point)),'Idle strolls and manager visits must use the same pavement');
+assert.ok(ground.isCityWalkable(ground.cityWalkablePoint({x:72+4,y:44+3})),'Conversation visit offsets must also stay on pavement');
+console.log('Pavement regression checks passed: waterfront excluded, crowded stops inland, and whole travel segments remain on ground.');

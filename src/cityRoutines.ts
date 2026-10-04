@@ -1,15 +1,11 @@
-import { agentJob, cityHash, jobPoint, personPoint, type CityPoint } from './crewCityModel';
+import { agentJob, cityHash, citySiteStand, cityWalkablePoint, personPoint, type CityPoint } from './crewCityModel';
 import type { Job, Person } from './types';
 
 export type CityAction = 'build' | 'carry' | 'collect' | 'review' | 'plan' | 'inspect' | 'manage' | 'rest' | 'wait';
 export type CityRoutine = { point: CityPoint; job?: Job; action: CityAction; label: string };
 const owns = (person: Person, job: Job) => job.assignee?.id === person.id || job.assignedAgentId === person.id;
-const inside = (point: CityPoint): CityPoint => ({ x: Math.max(12, Math.min(90, point.x)), y: Math.max(30, Math.min(95, point.y)) });
-const atSite = (person: Person, job: Job, jobs: Job[], secondSide = false): CityPoint => {
-  const site = jobPoint(job, jobs);
-  const side = job.status === 'working' || job.status === 'idea' ? -1 : 1;
-  return inside({ x: site.x + side * (3.7 + cityHash(person.id) % 2 * .3 + (secondSide ? .8 : 0)), y: site.y + (secondSide ? 9 : 5) + cityHash(person.id) % 2 });
-};
+const inside = cityWalkablePoint;
+const atSite = citySiteStand;
 
 // Choreography uses existing assignments. These poses never change job state.
 export function cityRoutine(person: Person, jobs: Job[], people: Person[], blocked: ReadonlySet<string>, elapsed: number): CityRoutine {
@@ -22,7 +18,7 @@ export function cityRoutine(person: Person, jobs: Job[], people: Person[], block
     const job = visits[step % visits.length];
     if (job && seconds % 12 < 8) return { point: atSite(person, job, jobs, true), job, action: 'manage', label: 'Checking on the crew' };
     const paths = [{ x: 48, y: 34 }, { x: 52, y: 53 }, { x: 49, y: 75 }, { x: 46, y: 52 }];
-    return { point: paths[step % paths.length], action: 'manage', label: 'Making the rounds' };
+    return { point: inside(paths[step % paths.length]), action: 'manage', label: 'Making the rounds' };
   }
   const owned = jobs.filter(job => owns(person, job)).sort((a, b) => a.id.localeCompare(b.id));
   const working = owned.filter(job => job.status === 'working' && !blocked.has(job.id));
