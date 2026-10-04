@@ -4,23 +4,25 @@ import { api } from './api';
 import { Avatar } from './Avatar';
 import { CityJobSite } from './CityJobSite';
 import { agentAppearance } from './agentAppearance';
-import { agentJob, cityDistricts, cityHash, cityJobs, districtSiteJobs, conversationTarget, eventLabel, isCityEvent, isConversation, jobPoint, mergeCityActivity, personPoint, type CityPoint } from './crewCityModel';
+import { agentJob, cityDistricts, cityHash, cityJobs, districtSiteJobs, conversationTarget, eventLabel, isCityEvent, isConversation, jobPoint, mergeCityActivity, type CityPoint } from './crewCityModel';
 import type { Activity, Job, JobStatus, NeedsYou, Person, Project } from './types';
 import './crew-city.css';
+import { cityRoutine, type CityAction } from './cityRoutines';
+import './city-routines.css';
 
 type Selection = { kind: 'person' | 'job' | 'district'; id: string } | null;
 type Bubble = { event: Activity; until: number; replay: boolean };
 type CityProps = { project: Project | null; projects: Project[]; people: Person[]; inbox: NeedsYou | null; onProject: (id: string) => void; onJob: (id: string) => void; onGoal: (id: string) => void };
 const icons = { idea: Leaf, working: Hammer, review: ClipboardCheck, completed: Check };
 const stateName = { idea: 'Assigned next', working: 'Working', review: 'Awaiting review', completed: 'Finished' };
-const patrol = [{ x: 50, y: 31 }, { x: 53, y: 53 }, { x: 49, y: 76 }, { x: 46, y: 52 }];
+
 const relativeTime = (date: string) => {
   const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(date)) / 60000));
   return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago`;
 };
 
-function CityCharacter({ person, point, job, blocked, selected, names, motion, bubble, onSelect, onConversation }: {
-  person: Person; point: CityPoint; job?: Job; blocked: boolean; selected: boolean; names: boolean; motion: boolean;
+function CityCharacter({ person, point, job, action, actionLabel, blocked, selected, names, motion, bubble, onSelect, onConversation }: {
+  person: Person; point: CityPoint; job?: Job; action: CityAction; actionLabel: string; blocked: boolean; selected: boolean; names: boolean; motion: boolean;
   bubble?: Bubble; onSelect: () => void; onConversation: (event: Activity) => void;
 }) {
   const [position, setPosition] = useState<CityPoint>({ x: 50, y: 54 });
@@ -33,16 +35,16 @@ function CityCharacter({ person, point, job, blocked, selected, names, motion, b
   const appearance = agentAppearance(person.id);
   const StatusIcon = blocked ? CircleHelp : person.canManage ? Crown : job ? icons[job.status] : Coffee;
   const status = blocked ? 'Needs a decision' : person.canManage ? 'Manager' : job ? stateName[job.status] : person.type === 'user' ? 'Workspace owner' : 'No active assignment';
-  return <div className={`city-character ${walking && motion ? 'is-walking' : ''} ${job?.status === 'working' && !blocked ? 'is-working' : ''} ${job && ['working', 'idea'].includes(job.status) ? 'works-west' : ''} ${selected ? 'is-selected' : ''} ${person.canManage ? 'is-manager' : ''} ${blocked ? 'is-blocked' : ''}`}
+  return <div className={`city-character ${walking && motion ? 'is-walking' : ''} ${action === 'build' && !bubble && !blocked ? 'is-working' : ''} ${action === 'carry' && !bubble ? 'is-carrying' : ''} ${action === 'collect' && !bubble ? 'is-collecting' : ''} ${['review', 'inspect', 'manage'].includes(action) && !bubble ? 'is-checking' : ''} ${action === 'plan' && !bubble ? 'is-planning' : ''} ${job && ['working', 'idea'].includes(job.status) ? 'works-west' : ''} ${selected ? 'is-selected' : ''} ${person.canManage ? 'is-manager' : ''} ${blocked ? 'is-blocked' : ''}`}
     style={{ left: `${position.x}%`, top: `${position.y}%`, zIndex: Math.round(position.y * 10) + (bubble ? 1000 : 0), '--bot-color': appearance.background, '--bot-accent': appearance.accent, '--bot-delay': `${cityHash(person.id) % 10 * -.2}s` } as CSSProperties}>
     {bubble && <button className={`city-speech ${bubble.replay ? 'is-replay' : ''}`} onClick={() => onConversation(bubble.event)} aria-label={`Open ${person.name}'s ${bubble.replay ? 'replayed' : 'new'} comment`} title={bubble.event.detail}>
       <span className="city-speech-label"><MessageCircle size={10} />{bubble.replay ? 'REPLAY' : 'NEW COMMENT'}</span><span>{bubble.event.detail.slice(0, 110)}{bubble.event.detail.length > 110 ? '…' : ''}</span>
     </button>}
-    <button className="city-person" onClick={onSelect} aria-label={`${person.name} · ${status}${job ? ` · ${job.title}` : ''}`} aria-pressed={selected}>
-      <span className="city-person-shadow" /><span className="city-person-body"><span className="city-arm left" /><span className="city-arm right" /><span className="city-torso"><i /></span><span className="city-work-tool" aria-hidden="true"><Hammer size={19} strokeWidth={2.5} /></span><span className="city-leg left" /><span className="city-leg right" /></span>
+    <button className="city-person" onClick={onSelect} aria-label={`${person.name} · ${status} · ${actionLabel}${job ? ` · ${job.title}` : ''}`} aria-pressed={selected}>
+      <span className="city-person-shadow" /><span className="city-person-body"><span className="city-arm left" /><span className="city-arm right" /><span className="city-torso"><i /></span><span className="city-work-tool" aria-hidden="true"><Hammer size={27} strokeWidth={2.5} /></span><span className="city-work-impact" aria-hidden="true"><Sparkles size={24} /></span><span className="city-carry-box" aria-hidden="true" /><span className="city-check-paper" aria-hidden="true">{action === 'plan' ? <Leaf /> : <ClipboardCheck />}</span><span className="city-leg left" /><span className="city-leg right" /></span>
       <span className="city-person-head"><Avatar id={person.id} name={person.name} bot={person.type === 'agent'} manager={person.canManage} /></span>
       <span className="city-state-icon" title={status}><StatusIcon size={11} /></span>
-      {(names || selected) && <span className="city-person-name">{person.name}</span>}
+      {(names || selected) && <span className="city-person-name">{person.name}</span>}<span className="city-action-label" aria-hidden="true">{actionLabel}</span>
     </button>
   </div>;
 }
@@ -69,7 +71,7 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
   const [zoom, setZoom] = useState(1);
   const [theater, setTheater] = useState(false);
   const [time, setTime] = useState(Date.now());
-  const [patrolStep, setPatrolStep] = useState(0);
+  const [motionTime, setMotionTime] = useState(0);
   const cursor = useRef(0);
   const initialized = useRef(false);
   const worldRef = useRef<HTMLElement>(null);
@@ -85,7 +87,7 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
   useEffect(() => { const timer = window.setInterval(() => setTime(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
     if (!effectiveMotion) return;
-    const timer = window.setInterval(() => setPatrolStep(step => (step + 1) % patrol.length), 10000);
+    const timer = window.setInterval(() => setMotionTime(seconds => seconds + 1), 1000);
     return () => window.clearInterval(timer);
   }, [effectiveMotion]);
   useEffect(() => {
@@ -141,7 +143,8 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
 
   const latest = [...events].reverse();
   const activeBubbles = Object.fromEntries(Object.entries(bubbles).filter(([, bubble]) => bubble.until > time));
-  const basePoints = new Map(residents.map(person => [person.id, personPoint(person, jobs, residents)]));
+  const routines = new Map(residents.map(person => [person.id, cityRoutine(person, jobs, residents, blockedIds, motionTime)]));
+  const basePoints = new Map(residents.map(person => [person.id, routines.get(person.id)!.point]));
   const pointFor = (person: Person): CityPoint => {
     const bubble = activeBubbles[person.id];
     if (bubble) {
@@ -150,7 +153,7 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
       const job = jobs.find(item => item.id === bubble.event.jobId);
       if (job) { const point = jobPoint(job, jobs); return { x: point.x + 2, y: point.y + 4 }; }
     }
-    return person.canManage && !agentJob(person, jobs) ? patrol[(patrolStep + cityHash(person.id)) % patrol.length] : basePoints.get(person.id)!;
+    return basePoints.get(person.id)!;
   };
   const visiblePeople = residents.filter(person => {
     const job = agentJob(person, jobs);
@@ -195,9 +198,10 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
         <img className="city-scenery" src="/crew-city/city-island.png" alt="An illustrated island city with an idea greenhouse, orange workshop, purple review lab, and green completion depot around an open plaza" draggable="false" />
         <div className="city-sunbeams" aria-hidden="true" /><div className="city-motes" aria-hidden="true"><i /><i /><i /><i /><i /></div>
         <span className="city-plaza-label">CREW PLAZA</span>
+        <div className="city-supply-cache" aria-hidden="true"><svg viewBox="0 0 56 48"><ellipse cx="28" cy="42" rx="24" ry="5" fill="#544e342d"/><g stroke="#876b49" strokeWidth="1.3" strokeLinejoin="round"><path d="M5 23l15 7v15L5 38z" fill="#d5a578"/><path d="M20 30l14-7v15l-14 7z" fill="#b78658"/><path d="M5 23l14-7 15 7-14 7z" fill="#e8c398"/><path d="M26 15l14 7v19l-14-7z" fill="#d5a578"/><path d="M40 22l12-6v19l-12 6z" fill="#b78658"/><path d="M26 15l12-6 14 7-12 6z" fill="#e8c398"/><path d="M11 26v14m20-22v18m12-16v19" stroke="#f2d79f" strokeWidth="3"/></g></svg></div>
         {cityDistricts.map(district => { const Icon = icons[district.id]; return <button className={`city-district ${selection?.id === district.id ? 'active' : ''}`} key={district.id} style={{ left: `${district.x}%`, top: `${district.y}%`, '--district-color': district.color } as CSSProperties} onClick={() => setSelection({ kind: 'district', id: district.id })} aria-label={`${district.name}: ${jobs.filter(job => job.status === district.id).length} jobs`}><Icon size={14} /><span>{district.name}</span><b>{jobs.filter(job => job.status === district.id).length}</b></button>; })}
         {cityDistricts.flatMap(district => districtSiteJobs(jobs, district.id).map(job => <CityJobSite key={job.id} job={job} point={jobPoint(job, jobs)} blocked={blockedIds.has(job.id)} selected={selection?.kind === 'job' && selection.id === job.id} fresh={time - Date.parse(job.createdAt) >= 0 && time - Date.parse(job.createdAt) < 60000} onSelect={() => setSelection({ kind: 'job', id: job.id })} />))}
-        {visiblePeople.map(person => { const job = agentJob(person, jobs); return <CityCharacter key={person.id} person={person} point={pointFor(person)} job={job} blocked={!!job && blockedIds.has(job.id)} selected={selection?.kind === 'person' && selection.id === person.id} names={names} motion={effectiveMotion} bubble={activeBubbles[person.id]} onSelect={() => setSelection({ kind: 'person', id: person.id })} onConversation={openConversation} />; })}
+        {visiblePeople.map(person => { const routine = routines.get(person.id)!; const job = routine.job; return <CityCharacter key={person.id} person={person} point={pointFor(person)} job={job} action={routine.action} actionLabel={activeBubbles[person.id] ? 'In a conversation' : routine.label} blocked={!!job && blockedIds.has(job.id)} selected={selection?.kind === 'person' && selection.id === person.id} names={names} motion={effectiveMotion} bubble={activeBubbles[person.id]} onSelect={() => setSelection({ kind: 'person', id: person.id })} onConversation={openConversation} />; })}
         {!agentCount && <div className="city-empty-world"><Sparkles size={20} /><strong>A city waiting for its crew.</strong><span>Connect agents to this project and they’ll appear here.</span></div>}
         <div className="city-map-sign"><Footprints size={13} /><span>{Object.values(activeBubbles).some(bubble => bubble.replay) ? 'Replaying a recorded comment' : 'Little footsteps. Real milestones.'}</span></div>
       </div></div>
