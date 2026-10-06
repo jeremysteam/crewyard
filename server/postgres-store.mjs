@@ -141,6 +141,50 @@ export function hydrateState(rows, nextActivityId) {
   return state;
 }
 
+// Every filter is parameterized; authentication remains fresh inside the read transaction.
+export async function loadScoped(sql, options) {
+  const { actor, selectedTables, sessionTokenHash, jobId, goalId } = options;
+  const workspaceIds = actor.kind === 'user'
+    ? sql`SELECT id FROM board_private.workspaces WHERE owner_id = ${actor.id}`
+    : sql`SELECT id FROM board_private.workspaces WHERE id = ${actor.workspaceId}`;
+  const projectIds = actor.kind === 'user'
+    ? sql`SELECT id FROM board_private.projects WHERE workspace_id IN (${workspaceIds})`
+    : sql`SELECT id FROM board_private.projects WHERE workspace_id IN (${workspaceIds}) AND coalesce(parent_project_id, id) = ${actor.rootProjectId}`;
+  const jobIds = jobId ? sql`SELECT id FROM board_private.jobs WHERE id = ${jobId} AND project_id IN (${projectIds})`
+    : goalId ? sql`SELECT id FROM board_private.jobs WHERE goal_id = ${goalId} AND project_id IN (${projectIds})`
+    : sql`SELECT id FROM board_private.jobs WHERE project_id IN (${projectIds})`;
+  const meetingIds = sql`SELECT id FROM board_private.meetings WHERE workspace_id IN (${workspaceIds})`;
+  const roundIds = sql`SELECT id FROM board_private.meeting_rounds WHERE meeting_id IN (${meetingIds})`;
+  const workspaceTables = new Set(['agents', 'agent_invites', 'announcements', 'meetings', 'meeting_memories']);
+  const projectTables = new Set(['goals', 'jobs', 'job_requests', 'scope_proposals', 'comments', 'folder_pairings', 'folders', 'project_work_locations']);
+  const wanted = new Set(selectedTables);
+  const entries = await Promise.all(tables.map(async table => {
+    if (!wanted.has(table)) return [table, []];
+    let filter;
+    if (table === 'users') filter = sql`id IN (SELECT owner_id FROM board_private.workspaces WHERE id IN (${workspaceIds})) OR id = ${actor.id}`;
+    else if (table === 'sessions') filter = sql`token_hash = ${sessionTokenHash} AND expires_at > now()`;
+    else if (table === 'workspaces') filter = sql`id IN (${workspaceIds})`;
+    else if (table === 'projects') filter = sql`id IN (${projectIds})`;
+    else if (workspaceTables.has(table)) filter = sql`workspace_id IN (${workspaceIds})`;
+    else if (table === 'agent_invite_redemptions') filter = sql`invite_id IN (SELECT id FROM board_private.agent_invites WHERE workspace_id IN (${workspaceIds}))`;
+    else if (table === 'meeting_rounds') filter = sql`meeting_id IN (${meetingIds})`;
+    else if (table === 'meeting_responses' || table === 'meeting_votes') filter = sql`round_id IN (${roundIds})`;
+    else if (table.startsWith('job_') && childTables.includes(table)) filter = sql`job_id IN (${jobIds})`;
+    else if (table === 'jobs') filter = sql`id IN (${jobIds})`;
+    else if (table === 'comments' && jobId) filter = sql`job_id = ${jobId} AND project_id IN (${projectIds})`;
+    else if (table === 'comments' && goalId) filter = sql`goal_id = ${goalId} AND project_id IN (${projectIds})`;
+    else if (table === 'votes' || (table === 'job_requests' && jobId)) filter = sql`job_id IN (${jobIds})`;
+    else if (projectTables.has(table)) filter = sql`project_id IN (${projectIds})`;
+    else throw new Error('Missing read filter for ' + table);
+    const order = childTables.includes(table) && table.startsWith('job_')
+      ? sql`job_id, ordinal` : table === 'comments' ? sql`created_at, id` : sql`${sql(keyColumn(table))}`;
+    const fields = table === 'users' ? sql`id, name, handle, email` : sql`*`;
+    return [table, await sql`SELECT ${fields} FROM board_private.${sql(table)} WHERE ${filter} ORDER BY ${order}`];
+  }));
+  // Read-only callbacks never allocate an event ID and need no counter lookup.
+  return hydrateState(Object.fromEntries(entries), 1);
+}
+
 async function load(sql, { omitHeavy = false, commentJobId = null, commentGoalId = null } = {}) {
   const entries = await Promise.all(tables.map(async table => {
     if (table === 'comments') {
@@ -232,6 +276,15 @@ export function createPostgresStore(connectionString) {
       }
       return null;
     },
+    meetingVersion: ({ actor, meetingId, agentTokenHash, sessionTokenHash }) => sql.begin(async tx => {
+      await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
+      await assertActorActive(tx, { actor, agentTokenHash, sessionTokenHash });
+      const rows = actor.kind === 'user'
+        ? await tx`SELECT m.updated_at FROM board_private.meetings m JOIN board_private.workspaces w ON w.id = m.workspace_id WHERE m.id = ${meetingId} AND w.owner_id = ${actor.id}`
+        : await tx`SELECT m.updated_at FROM board_private.meetings m WHERE m.id = ${meetingId} AND m.workspace_id = ${actor.workspaceId} AND (m.participant_ids @> ${tx.json([actor.id])}::jsonb OR EXISTS (SELECT 1 FROM board_private.agents a WHERE a.id = ${actor.id} AND a.can_manage = true AND a.revoked_at IS NULL))`;
+      if (!rows.length) { const error = new Error('Meeting not found'); error.status = 404; throw error; }
+      return stamp(rows[0].updated_at);
+    }),
     listMentions: ({ actor, since = null, unreadOnly = false, agentTokenHash, sessionTokenHash }) => sql.begin(async tx => {
       await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
       await assertActorActive(tx, { actor, agentTokenHash, sessionTokenHash });
@@ -262,7 +315,7 @@ export function createPostgresStore(connectionString) {
     }),
     read: (fn, options = {}) => sql.begin(async tx => {
       await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
-      return fn(await load(tx, options));
+      return fn(await (options.selectedTables ? loadScoped(tx, options) : load(tx, options)));
     }),
     write: fn => sql.begin(async tx => {
       // The callback API needs a single writer across all server instances.

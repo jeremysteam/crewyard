@@ -1,3 +1,4 @@
+import { useVisiblePolling } from './useVisiblePolling';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity as ActivityIcon, ArrowDownRight, ArrowLeft, ArrowRight, Bell, BookOpen, Bot, Check,
@@ -176,7 +177,7 @@ function App() {
        setSelectedProjectId(current => current && p.some(x => x.id === current) ? current : p.find(x => !x.parentProjectId)?.id || null);
     } catch (e) { notify((e as Error).message); }
   }, [workspace?.id, notify]);
-  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 15_000); return () => window.clearInterval(timer); }, [refresh]);
+  useVisiblePolling(refresh, 15_000, [refresh]);
   useEffect(() => { if (!selectedProject) return; void api<Activity[]>(`/projects/${selectedProject.id}/activity`).then(setActivity).catch(() => {}); }, [selectedProject?.id, projects]);
   useEffect(() => {
     if (!activeRoot || me?.actor.kind !== 'user') { setNeedsYou(null); return; }

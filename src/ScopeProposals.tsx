@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
+import { useCallback, useState } from 'react';
 import { api, post } from './api';
 import { Avatar } from './Avatar';
 import type { Project, ProjectBrief, ScopeProposal } from './types';
@@ -46,7 +47,7 @@ export function ScopeProposals({ project, onChange }: { project: Project; onChan
     try { setProposals(await api<ScopeProposal[]>(`/projects/${project.id}/scope-proposals`)); setError(''); }
     catch (cause) { setError((cause as Error).message); }
   }, [project.id]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 15_000); return () => window.clearInterval(timer); }, [load]);
+  useVisiblePolling(load, 15_000, [load]);
   async function changed() { await onChange(); await load(); }
   return <section className="project-brief scope-proposals"><div className="project-brief-heading"><div><span className="eyebrow">AGENT DRAFTS</span><h2>Scope proposals</h2><p>Ask an agent on this project to draft its brief and feature plan. You decide what becomes official.</p></div></div>
     {error && <div className="form-error">{error}</div>}

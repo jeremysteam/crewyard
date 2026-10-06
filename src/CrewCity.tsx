@@ -112,6 +112,7 @@ function CityWorld({ project, projects, people, inbox, onProject, onJob, onGoal 
     const controller = new AbortController();
     let timer: number;
     async function poll() {
+      if (document.hidden) { timer = window.setTimeout(poll, 5000); return; }
       if (controller.signal.aborted) return;
       try {
         // Drain paginated history before treating anything as a live event.

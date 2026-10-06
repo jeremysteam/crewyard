@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
+import { useState, type FormEvent } from 'react';
 import { api, patch, post } from './api';
 import { Avatar } from './Avatar';
 import type { Person, Project, Ref, Workspace } from './types';
@@ -26,7 +27,7 @@ export function AnnouncementsPage({ workspace, people, projects, onChange }: { w
   const openJobs = projects.flatMap(project => project.jobs.filter(job => job.status === 'idea' && !job.assignee)
     .map(job => ({ job, project }))).filter(({ project }) => !agentId || agents.find(agent => agent.id === agentId)?.rootProjectId === (project.parentProjectId || project.id));
   async function refresh() { setData(await api(`/workspaces/${workspace.id}/announcements`)); }
-  useEffect(() => { void refresh().catch(cause => setError((cause as Error).message)); const timer = window.setInterval(() => void refresh().catch(() => {}), 5000); return () => window.clearInterval(timer); }, [workspace.id]);
+  useVisiblePolling(async () => { try { await refresh(); } catch (cause) { setError((cause as Error).message); throw cause; } }, 5000, [workspace.id]);
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setBusy(true);
     try {
@@ -77,7 +78,7 @@ export function MeetingsPage({ workspace, people }: { workspace: Workspace; peop
     const id = meetingId || selected?.id;
     if (id) setSelected(await api<Meeting>(`/meetings/${id}`));
   }
-  useEffect(() => { void refresh().catch(cause => setError((cause as Error).message)); const timer = window.setInterval(() => void refresh().catch(() => {}), 5000); return () => window.clearInterval(timer); }, [workspace.id, selected?.id]);
+  useVisiblePolling(async () => { try { await refresh(); } catch (cause) { setError((cause as Error).message); throw cause; } }, 5000, [workspace.id, selected?.id]);
   async function act(work: () => Promise<Meeting>) { setError(''); setBusy(true); try { setSelected(await work()); await refresh(); } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); } }
   async function create(event: FormEvent) {
     event.preventDefault();

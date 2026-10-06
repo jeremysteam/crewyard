@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { createStore } from './store.mjs';
+import { readScopeFor } from './read-scope.mjs';
 
 const scrypt = promisify(scryptCallback);
 const day = 86_400_000;
@@ -503,7 +504,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       : method === 'GET' && /^\/api\/projects\/[^/]+\/review-queue$/.test(path) ? {}
       : { omitHeavy: true };
     store = {
-      read: fn => baseStore.read(authorized(fn), readScope),
+      read: fn => baseStore.read(authorized(fn), { ...readScope, ...readScopeFor(path, method, actor, credentialHashes(req)) }),
       write: fn => baseStore.write(authorized(fn)),
     };
 
@@ -653,8 +654,14 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       const timeout = Math.min(30, Math.max(1, Number(url.searchParams.get('timeout') || 20)));
       const deadline = Date.now() + timeout * 1000;
       while (true) {
-        const value = await store.read(db => meetingView(db, actor, meeting(db, actor, match[1])));
-        if (value.updatedAt !== since || Date.now() >= deadline) return send(res, 200, { timedOut: value.updatedAt === since, meeting: value });
+        // Waiting checks read one version row, not the full board or meeting transcript.
+        const version = baseStore.meetingVersion
+          ? await baseStore.meetingVersion({ actor, ...credentialHashes(req), meetingId: match[1] })
+          : await store.read(db => meeting(db, actor, match[1]).updatedAt);
+        if (version !== since || Date.now() >= deadline) {
+          const value = await store.read(db => meetingView(db, actor, meeting(db, actor, match[1])));
+          return send(res, 200, { timedOut: value.updatedAt === since, meeting: value });
+        }
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }

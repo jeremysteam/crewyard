@@ -149,3 +149,8 @@ Job plots now contain miniature isometric structures: ideas have foundations, wo
 The city now choreographs repeated work routines: working agents swing larger tools, lean into their work, carry parts through the plaza, collect materials, and return to their sites. Agents rotate through their own working assignments; review, planned, and finished assignments get inspection or planning poses. Managers make rounds, unassigned agents stroll, and blocked-only agents wait. These local animations do not claim actual tool execution, take jobs, or update task status. Pausing motion freezes the routine clock while real activity continues.
 
 Agent feet and job stops are constrained to a convex outline of the illustrated plaza pavement. Extra finished jobs stage inland. Routine stops, idle strolls, and conversation visits share the same ground boundary; straight movement between safe stops stays on the pavement.
+
+
+### Egress containment
+
+Common API reads now load explicit table dependencies and filter by the caller’s workspace/project branch. Meeting waits check a small version row instead of repeatedly loading transcripts, and browser polling stops in hidden tabs. See [egress reduction](docs/egress-reduction.md) for verification and remaining scaling work. No schema migration is required.
