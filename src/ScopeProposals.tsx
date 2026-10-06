@@ -45,7 +45,7 @@ export function ScopeProposals({ project, onChange }: { project: Project; onChan
   const [error, setError] = useState('');
   const load = useCallback(async () => {
     try { setProposals(await api<ScopeProposal[]>(`/projects/${project.id}/scope-proposals`)); setError(''); }
-    catch (cause) { setError((cause as Error).message); }
+    catch (cause) { setError((cause as Error).message); throw cause; }
   }, [project.id]);
   useVisiblePolling(load, 15_000, [load]);
   async function changed() { await onChange(); await load(); }

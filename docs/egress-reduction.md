@@ -1,5 +1,7 @@
 # Egress reduction
 
+This document describes the initial containment release (`25d8e9`). The subsequent scoped-write, shared-wait, pagination and quota implementation is documented in [SaaS scaling](saas-scaling.md), with a separate manual SQL and staged rollout gate.
+
 The callback-based relational loader read almost every table on many small requests. These transfers count as Supabase egress even when the API response contains no changes.
 
 ## Application patch

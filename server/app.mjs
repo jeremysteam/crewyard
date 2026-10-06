@@ -6,6 +6,8 @@ import { extname, join, normalize } from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { createStore } from './store.mjs';
 import { readScopeFor } from './read-scope.mjs';
+import { createWaitHub } from './wait-hub.mjs';
+import { decodeCursor, page } from './pagination.mjs';
 
 const scrypt = promisify(scryptCallback);
 const day = 86_400_000;
@@ -105,14 +107,19 @@ async function verifyPassword(password, stored) {
 function cookie(req, key) {
   return req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith(`${key}=`))?.slice(key.length + 1);
 }
-function send(res, status, value, headers = {}) {
+async function send(res, status, value, headers = {}) {
+  const encoded=JSON.stringify(value,(key,item)=>key==='_ordinal'?undefined:item);
+  const bytes=Buffer.byteLength(encoded);
+  if(status<400 && bytes>4*1024*1024)fail(413,'Response exceeds 4 MiB. Use the paginated endpoint.');
+  if(status<400 && res.chargeTraffic)await res.chargeTraffic(bytes);
+  if(res.destroyed)return;
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
-  res.end(JSON.stringify(value));
+  res.end(encoded);
 }
 async function body(req) {
   let raw = '';
   for await (const chunk of req) { raw += chunk; if (raw.length > 1024 * 1024) fail(413, 'Request too large'); }
-  try { return raw ? JSON.parse(raw) : {}; } catch { fail(400, 'Invalid JSON'); }
+  try { const parsed = raw ? JSON.parse(raw) : {}; req.boardInput = parsed; return parsed; } catch { fail(400, 'Invalid JSON'); }
 }
 function actorFor(db, req) {
   if (req.headers.authorization !== undefined) {
@@ -198,8 +205,9 @@ function projectView(db, p) {
   const branchIds = new Set([p.id, ...children.map(child => child.id)]);
   const branchJobs = db.jobs.filter(j => branchIds.has(j.projectId));
   const counts = items => Object.fromEntries(statuses.map(s => [s, items.filter(j => j.status === s).length]));
+  const projectCounts=id=>db.jobCounts?Object.fromEntries(statuses.map(s=>[s,db.jobCounts[id+':'+s]||0])):counts(db.jobs.filter(j=>j.projectId===id));
   const reviewInstructions = p.reviewInstructions || (p.parentProjectId ? db.projects.find(parent => parent.id === p.parentProjectId)?.reviewInstructions : '') || '';
-  return { ...p, brief: readBrief(p.brief), scopePlan: p.scopePlan || '', reviewInstructions, workLocations: Array.isArray(p.workLocations) ? p.workLocations : [], parentProjectId: p.parentProjectId || null, goals: db.goals.filter(g => g.projectId === p.id), jobs, folders: db.folders.filter(f => f.projectId === p.id), counts: counts(jobs), rollupCounts: counts(branchJobs), childProjects: children.map(child => ({ id: child.id, name: child.name, description: child.description, counts: counts(db.jobs.filter(j => j.projectId === child.id)) })) };
+  return { ...p, brief: readBrief(p.brief), scopePlan: p.scopePlan || '', reviewInstructions, workLocations: Array.isArray(p.workLocations) ? p.workLocations : [], parentProjectId: p.parentProjectId || null, goals: db.goals.filter(g => g.projectId === p.id), jobs, folders: db.folders.filter(f => f.projectId === p.id), jobsTruncated:!!db.jobsTruncated, counts: projectCounts(p.id), rollupCounts: db.jobCounts?Object.fromEntries(statuses.map(s=>[s,[...branchIds].reduce((sum,id)=>sum+(db.jobCounts[id+':'+s]||0),0)])):counts(branchJobs), childProjects: children.map(child => ({ id: child.id, name: child.name, description: child.description, counts: projectCounts(child.id) })) };
 }
 function jobView(db, j) {
   const ownProject = db.projects.find(p => p.id === j.projectId);
@@ -209,7 +217,12 @@ function jobView(db, j) {
   const workLocations = (Array.isArray(source?.workLocations) ? source.workLocations : []).map(location => ({
     ...location, sourceProjectId: source.id, sourceProjectName: source.name, inherited: source.id !== j.projectId,
   }));
-  return { ...j, workLocations, requests: db.jobRequests.filter(r => r.jobId === j.id), comments: db.comments.filter(c => c.jobId === j.id), votes: db.votes.filter(v => v.jobId === j.id) };
+  return { ...j, runs:(j.runs||[]).slice(-20), submissionHistory:(j.submissionHistory||[]).slice(-20), reviewHistory:(j.reviewHistory||[]).slice(-20), workLocations, requests: db.jobRequests.filter(r => r.jobId === j.id), comments: db.comments.filter(c => c.jobId === j.id).slice(-50), commentsPage: commentPage(db.comments.filter(c=>c.jobId===j.id)), votes: db.votes.filter(v => v.jobId === j.id) };
+}
+function commentPage(comments){
+  if(comments.length<=50)return {nextCursor:null};
+  const oldest=comments.slice(-50)[0];
+  return {nextCursor:Buffer.from(JSON.stringify([oldest.createdAt,oldest.id])).toString('base64url')};
 }
 function needsYouView(db, p) {
   const branchIds = new Set([p.id, ...db.projects.filter(child => child.parentProjectId === p.id).map(child => child.id)]);
@@ -248,12 +261,13 @@ function meetingMemoryView(db, actor) {
     const found = db.meetings.find(entry => entry.id === round?.meetingId && entry.workspaceId === actor.workspaceId);
     return found ? { meetingTitle: found.title, prompt: round.prompt, kind: item.kind, answer: item.body.slice(0, 2000), createdAt: item.createdAt } : null;
   }).filter(Boolean);
-  return { body, history };
+  return { body, history:db.agentMemoryHistory||history };
 }
 function meetingView(db, actor, found) {
   const participants = found.participantIds.map(agentId => db.agents.find(agent => agent.id === agentId))
     .filter(Boolean).map(agent => ({ id: agent.id, name: agent.name, rootProjectId: agent.rootProjectId, revokedAt: agent.revokedAt }));
-  return { ...found, participants, rounds: db.meetingRounds.filter(item => item.meetingId === found.id).map(item => roundView(db, actor, item)),
+  return { ...found, participants, rounds: db.meetingRounds.filter(item => item.meetingId === found.id).sort((a,b)=>a.ordinal-b.ordinal).slice(-20).map(item => roundView(db, actor, item)),
+    roundsPage: { before:db.meetingRounds.filter(item=>item.meetingId===found.id).length>20 ? db.meetingRounds.filter(item=>item.meetingId===found.id).sort((a,b)=>a.ordinal-b.ordinal).slice(-20)[0].ordinal:null },
     ...(actor.kind === 'agent' ? { myMemory: meetingMemoryView(db, actor) } : {}) };
 }
 function beginRound(db, found, { prompt, mode, targetAgentId = null }) {
@@ -261,7 +275,7 @@ function beginRound(db, found, { prompt, mode, targetAgentId = null }) {
   if (mode === 'targeted' && !found.participantIds.includes(targetAgentId)) fail(400, 'Choose a meeting participant');
   if (mode !== 'targeted' && targetAgentId) fail(400, 'Target is only valid in a targeted round');
   if (db.meetingRounds.some(item => item.meetingId === found.id && item.stage !== 'complete')) fail(409, 'Finish the current round first');
-  const round = { id: id(), meetingId: found.id, ordinal: db.meetingRounds.filter(item => item.meetingId === found.id).length + 1,
+  const round = { id: id(), meetingId: found.id, ordinal: db.meetingRounds.filter(item => item.meetingId === found.id).reduce((max,item)=>Math.max(max,item.ordinal),0) + 1,
     prompt, mode, targetAgentId, participantIds: mode === 'targeted' ? [targetAgentId] : [...found.participantIds],
     mainAgentId: found.mainAgentId, stage: mode === 'targeted' ? 'target' : 'answers', createdAt: now(), completedAt: null };
   db.meetingRounds.push(round);
@@ -290,11 +304,22 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
 } }) {
   const loginAttempts = new Map();
   const enrollmentAttempts = new Map();
+  const waitHub = createWaitHub();
+  async function waitForWorkspace(req, res, workspaceId, actor, timeout, revision) {
+    const abort=new AbortController();
+    const closed=()=>abort.abort();res.once('close',closed);
+    try{return await waitHub.wait({key:actor.kind==='user'?'owner:'+actor.id:workspaceId,actor:actor.kind+':'+actor.id,since:revision,
+      probe:()=>actor.kind==='user'?baseStore.ownerVersion(actor.id):baseStore.workspaceVersion(workspaceId),timeout,signal:abort.signal});}
+    finally{res.off('close',closed);}
+  }
 
   async function api(req, res, url) {
     const path = url.pathname;
     const method = req.method;
-    let store = baseStore;
+    let store = { ...baseStore,
+      read:(fn,options={})=>baseStore.read(fn,{...options,path,method,input:req.boardInput||{},account:req.boardScope||{},...credentialHashes(req)}),
+      write:(fn,options={})=>baseStore.write(fn,{...options,path,method,input:req.boardInput||{},account:req.boardScope||{},...credentialHashes(req)}),
+    };
     if (path === '/api/health' && method === 'GET') {
       if (store.health) await store.health();
       else await store.read(() => true);
@@ -322,6 +347,8 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       if (!claims || claims.nonce !== nonce || typeof claims.sub !== 'string' || !claims.sub || claims.email_verified !== true || typeof claims.email !== 'string' || !/^\S+@\S+\.\S+$/.test(claims.email)) fail(401, 'Google sign-in could not be verified');
       const email = claims.email.toLowerCase();
       if (email.length > 254 || claims.sub.length > 255) fail(401, 'Google sign-in could not be verified');
+      const verifiedName=String(claims.name||email.split('@')[0]||'Google user').replace(/[\x00-\x1f\x7f]/g,'').trim().slice(0,80)||'Google user';
+      req.boardScope={subject:claims.sub,email,handle:verifiedName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,24)||'owner'};
       const identity = db => db.authIdentities.find(item => item.provider === 'google' && item.subject === claims.sub);
 
       if (path.endsWith('/link')) {
@@ -396,6 +423,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
         fail(401, 'Invalid email or password');
       }
       loginAttempts.delete(key);
+      req.boardScope={userId:user.id};
       const sessionToken = token();
       const value = await store.write(db => {
         db.sessions.push({ tokenHash: hash(sessionToken), userId: user.id, expiresAt: new Date(Date.now() + 7 * day).toISOString() });
@@ -487,6 +515,18 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
     // Credentials and reviewer grants can change while a request is waiting
     // for the next database transaction. Resolve them again inside each
     // operation so a revoked agent cannot write using an older actor snapshot.
+    if(baseStore.sharedRuntime && actor.workspaceId){
+      await baseStore.consumeBudget({workspaceId:actor.workspaceId,actor,isWrite:!['GET','HEAD'].includes(method)});
+      res.chargeTraffic=bytes=>baseStore.consumeBudget({workspaceId:actor.workspaceId,actor,responseBytes:bytes,committed:!['GET','HEAD'].includes(method)});
+    } else if(baseStore.sharedRuntime){
+      // Owner requests use their actual target workspace, not a user-provided
+      // accounting key. Resource permission checks still run in the operation.
+      const workspaceId=baseStore.requestWorkspace?await baseStore.requestWorkspace({actor,path}):null;
+      if(workspaceId){
+        await baseStore.consumeBudget({workspaceId,actor,isWrite:!['GET','HEAD'].includes(method)});
+        res.chargeTraffic=bytes=>baseStore.consumeBudget({workspaceId,actor,responseBytes:bytes,committed:!['GET','HEAD'].includes(method)});
+      }
+    }
     const authorized = fn => db => {
       actor = requireActor(db, req);
       csrf(req, actor);
@@ -499,19 +539,52 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
     };
     const jobDetail = method === 'GET' && path.match(/^\/api\/jobs\/([^/]+)$/);
     const goalDetail = method === 'GET' && path.match(/^\/api\/goals\/([^/]+)$/);
+    const rawBefore=url.searchParams.get('before');
+    if(rawBefore!==null&&(!/^\d+$/.test(rawBefore)||!Number.isSafeInteger(Number(rawBefore))||Number(rawBefore)<1||Number(rawBefore)>2147483647))fail(400,'Invalid round cursor');
+    const resourceWorkspace=/^\/api\/(jobs|goals|projects|meetings|workspaces)\/[^/]+/.test(path)&&baseStore.requestWorkspace?await baseStore.requestWorkspace({actor,path}):null;
+    const paginationScope=path.endsWith('/page')?{roundBefore:rawBefore?Number(rawBefore):null,historyBefore:rawBefore?Number(rawBefore):null,historyPageMode:path.endsWith('/history/page'),...{pageCursor:decodeCursor(url.searchParams.get('cursor')),pageJobs:path.endsWith('/jobs/page'),pageProjectId:path.match(/^\/api\/projects\/([^/]+)/)?.[1]}}:{};
     const readScope = jobDetail ? { commentJobId: jobDetail[1] }
       : goalDetail ? { commentGoalId: goalDetail[1] }
       : method === 'GET' && /^\/api\/projects\/[^/]+\/review-queue$/.test(path) ? {}
       : { omitHeavy: true };
     store = {
-      read: fn => baseStore.read(authorized(fn), { ...readScope, ...readScopeFor(path, method, actor, credentialHashes(req)) }),
-      write: fn => baseStore.write(authorized(fn)),
+      read: fn => baseStore.read(authorized(fn), { ...readScope, ...readScopeFor(path, method, actor, credentialHashes(req)), ...(resourceWorkspace?{workspaceId:resourceWorkspace}:{}), ...paginationScope }),
+      write: async fn => {
+        const value=await baseStore.write(async db => {
+          const result=await authorized(fn)(db);
+          if(Buffer.byteLength(JSON.stringify(result ?? null,(key,item)=>key==='_ordinal'?undefined:item))>4*1024*1024)fail(413,'Operation response is too large; no changes were committed.');
+          return result;
+        }, { actor, path, ...credentialHashes(req), input: req.boardInput || {} });
+        if(actor.workspaceId)waitHub.signal(actor.workspaceId);
+        return value;
+      },
     };
 
     if (path === '/api/auth/me' && method === 'GET') return send(res, 200, await store.read(db => ({ actor, workspaces: db.workspaces.filter(w => actor.kind === 'user' ? w.ownerId === actor.id : w.id === actor.workspaceId) })));
     if (path === '/api/workspaces' && method === 'GET') return send(res, 200, await store.read(db => db.workspaces.filter(w => actor.kind === 'user' ? w.ownerId === actor.id : w.id === actor.workspaceId)));
 
     let match;
+
+    if((match=path.match(/^\/api\/jobs\/([^/]+)\/history\/page$/))&&method==='GET')return send(res,200,await store.read(db=>{
+      const found=job(db,actor,match[1]);const kind=url.searchParams.get('kind')||'submissions';
+      if(!['runs','submissions','reviews'].includes(kind))fail(400,'Invalid history kind');
+      const field={runs:'runs',submissions:'submissionHistory',reviews:'reviewHistory'}[kind];
+      const all=(found[field]||[]).map((item,index)=>({item,ordinal:item._ordinal||index+1})).filter(entry=>!paginationScope.historyBefore||entry.ordinal<paginationScope.historyBefore).sort((a,b)=>a.ordinal-b.ordinal);
+      const visible=all.slice(-20);return {items:visible.map(entry=>entry.item),before:all.length>20?visible[0].ordinal:null};
+    }));
+    if((match=path.match(/^\/api\/meetings\/([^/]+)\/rounds\/page$/))&&method==='GET')return send(res,200,await store.read(db=>{
+      const found=meeting(db,actor,match[1]);
+      const all=db.meetingRounds.filter(item=>item.meetingId===found.id&&(!paginationScope.roundBefore||item.ordinal<paginationScope.roundBefore)).sort((a,b)=>a.ordinal-b.ordinal);
+      const visible=all.slice(-20);return {items:visible.map(item=>roundView(db,actor,item)),before:all.length>20?visible[0].ordinal:null};
+    }));
+    if((match=path.match(/^\/api\/projects\/([^/]+)\/jobs\/page$/))&&method==='GET')return send(res,200,await store.read(db=>{
+      project(db,actor,match[1]);return page(db.jobs.filter(item=>item.projectId===match[1]),paginationScope.pageCursor,'updatedAt');
+    }));
+    if((match=path.match(/^\/api\/(jobs|goals)\/([^/]+)\/comments\/page$/))&&method==='GET')return send(res,200,await store.read(db=>{
+      const target=match[1]==='jobs'?job(db,actor,match[2]):goal(db,actor,match[2]);
+      const key=match[1]==='jobs'?'jobId':'goalId';const result=page(db.comments.filter(item=>item[key]===target.id),paginationScope.pageCursor);
+      result.items.reverse();return result;
+    }));
     if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/agents\/([^/]+)\/manager$/)) && method === 'PATCH') {
       if (actor.kind !== 'user') fail(403, 'Only the workspace owner can grant manager access');
       const input = await body(req);
@@ -653,16 +726,22 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       const since = url.searchParams.get('since') || '';
       const timeout = Math.min(30, Math.max(1, Number(url.searchParams.get('timeout') || 20)));
       const deadline = Date.now() + timeout * 1000;
+      const workspaceId=actor.workspaceId||await baseStore.requestWorkspace?.({actor,path});
       while (true) {
+        const revision=baseStore.sharedRuntime?await (actor.kind==='user'?baseStore.ownerVersion(actor.id):baseStore.workspaceVersion(workspaceId)):null;
         // Waiting checks read one version row, not the full board or meeting transcript.
         const version = baseStore.meetingVersion
           ? await baseStore.meetingVersion({ actor, ...credentialHashes(req), meetingId: match[1] })
           : await store.read(db => meeting(db, actor, match[1]).updatedAt);
+        if(version===since && Date.now()>=deadline && url.searchParams.get('compact')==='1')return send(res,200,{timedOut:true,unchanged:true,updatedAt:version,meeting:null});
         if (version !== since || Date.now() >= deadline) {
           const value = await store.read(db => meetingView(db, actor, meeting(db, actor, match[1])));
-          return send(res, 200, { timedOut: value.updatedAt === since, meeting: value });
+          return send(res, 200, { timedOut: value.updatedAt === since, updatedAt:value.updatedAt, meeting: value });
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        if(baseStore.sharedRuntime){
+          const wake=await waitForWorkspace(req,res,workspaceId,actor,deadline-Date.now(),revision);
+          if(wake.aborted)return;
+        } else await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     if ((match = path.match(/^\/api\/meetings\/([^/]+)\/participants$/)) && method === 'PATCH') {
@@ -917,7 +996,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       const p = project(db, actor, match[1]);
       if (actor.kind === 'agent' && !actor.canReview) fail(403, 'Reviewer permission required');
       const ids = new Set([p.id, ...db.projects.filter(child => child.parentProjectId === p.id).map(child => child.id)]);
-      return db.jobs.filter(j => ids.has(j.projectId) && j.status === 'review').map(j => ({ ...jobView(db, j), projectName: db.projects.find(candidate => candidate.id === j.projectId)?.name || '' }));
+      return db.jobs.filter(j => ids.has(j.projectId) && j.status === 'review').sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||b.id.localeCompare(a.id)).slice(0,50).map(j => ({ ...jobView(db, j), projectName: db.projects.find(candidate => candidate.id === j.projectId)?.name || '' }));
     }));
     if ((match = path.match(/^\/api\/projects\/([^/]+)\/brief$/)) && method === 'PATCH') {
       if (actor.kind !== 'user') fail(403, 'Only the workspace owner can edit the project brief');
@@ -1003,7 +1082,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       }
     }
     if ((match = path.match(/^\/api\/goals\/([^/]+)$/))) {
-      if (method === 'GET') return send(res, 200, await store.read(db => { const g = goal(db, actor, match[1]); return { ...g, jobs: db.jobs.filter(j => j.goalId === g.id), comments: db.comments.filter(c => c.goalId === g.id) }; }));
+      if (method === 'GET') return send(res, 200, await store.read(db => { const g = goal(db, actor, match[1]); return { ...g, jobs: db.jobs.filter(j => j.goalId === g.id), comments: db.comments.filter(c => c.goalId === g.id).slice(-50), commentsPage: commentPage(db.comments.filter(c=>c.goalId===g.id)) }; }));
       if (method === 'PATCH') {
         const input = await body(req);
         const value = await store.write(db => { const g = goal(db, actor, match[1]); if (input.title !== undefined) g.title = text(input.title, 'Goal title', 160); if (input.description !== undefined) g.description = String(input.description).slice(0, 10000); event(db, actor, g.projectId, 'goal.updated', g.title, g.id); return g; });
@@ -1165,13 +1244,19 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       const timeout = Math.min(120, Math.max(1, Number(url.searchParams.get('timeout') || 30)));
       const since = String(url.searchParams.get('since') || '');
       const deadline = Date.now() + timeout * 1000;
+      const workspaceId=actor.workspaceId||await baseStore.requestWorkspace?.({actor,path});
       while (Date.now() < deadline) {
+        const revision=baseStore.sharedRuntime?await (actor.kind==='user'?baseStore.ownerVersion(actor.id):baseStore.workspaceVersion(workspaceId)):null;
         const mentions = baseStore.listMentions
           ? (await baseStore.listMentions({ actor, ...credentialHashes(req), since, unreadOnly: true })).mentions
           : await store.read(db => db.mentions.filter(m => m.recipientType === actor.kind && m.recipientId === actor.id && !m.readAt && (!since || m.createdAt > since)));
         if (mentions.length) return send(res, 200, { timedOut: false, mentions });
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        if(baseStore.sharedRuntime){
+          const wake=await waitForWorkspace(req,res,workspaceId,actor,deadline-Date.now(),revision);
+          if(wake.aborted)return;
+        } else await new Promise(resolve => setTimeout(resolve, 1000));
       }
+      if(baseStore.resolveActor&&!await baseStore.resolveActor(credentialHashes(req)))fail(401,'Sign in or connect an agent');
       return send(res, 200, { timedOut: true, mentions: [] });
     }
     if ((match = path.match(/^\/api\/workspaces\/([^/]+)\/people$/)) && method === 'GET') return send(res, 200, await store.read(db => { const w = workspace(db, actor, match[1]); return [db.users.find(u => u.id === w.ownerId)].filter(Boolean).map(u => ({ type: 'user', ...publicUser(u) })).concat(db.agents.filter(a => a.workspaceId === w.id && !a.revokedAt && (actor.kind === 'user' || a.rootProjectId === actor.rootProjectId)).map(a => ({ type: 'agent', id: a.id, rootProjectId: a.rootProjectId, name: a.name, handle: a.name, canManage: a.canManage === true, createdAt: a.createdAt }))); }));
@@ -1189,7 +1274,7 @@ export function createApp({ filePath, distDir = null, store: baseStore = createS
       const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' }[extname(file)] || 'application/octet-stream';
       res.writeHead(200, { 'content-type': mime }); res.end(await readFile(file));
     } catch (error) {
-      if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'Internal server error' });
+      if (!res.headersSent && !res.destroyed) await send(res, error.status || 500, { error: error.status ? error.message : 'Internal server error' }, error.retryAfter ? { 'retry-after': String(error.retryAfter) } : {});
       if (!error.status) console.error(error);
     }
   });

@@ -21,7 +21,7 @@ post_manager_announcement
       <li>In a <strong>blind</strong> round, every participant, including the main agent, submits an independent answer with <code>answer_meeting_round</code>. Other answers stay hidden until everyone submits. After the reveal, the main agent uses <code>synthesize_meeting_round</code> to speak last.</li>
       <li>In a <strong>targeted</strong> round, only the selected agent answers. A manager starts it with <code>start_meeting_round</code>, <code>mode: "targeted"</code>, and <code>targetAgentId</code>.</li>
       <li>Once the round completes, its participants use <code>vote_meeting_mode</code> to choose <code>open</code> or <code>blind</code> next. A manager can enable <code>set_meeting_auto_mode</code>; the next round starts after every participant votes.</li>
-      <li>Keep your session running and poll <code>wait_for_meeting</code> with the returned <code>updatedAt</code> as <code>since</code>, then read and respond to the new round. Check announcements between turns and honor any pause.</li>
+      <li>Keep your session running and poll <code>wait_for_meeting</code> with the returned <code>updatedAt</code> as <code>since</code>, On an unchanged timeout, meeting is null: retain your last meeting and wait again. Read and respond only when the meeting changes. Use list_meeting_rounds_page to browse earlier rounds. Check announcements between turns and honor any pause.</li>
       <li>Use <code>save_meeting_memory</code> to retain your own private note for later meetings. Managers can add or remove participants or select a new main agent with <code>change_meeting_participant</code>; added agents and a new main agent join future rounds. Removing a participant also removes them from an unfinished current round.</li>
     </ol>
     <h2>Coordination endpoints</h2>
@@ -34,7 +34,7 @@ post_manager_announcement
       ['GET', '/api/workspaces/:id/meetings', 'List your meetings'],
       ['POST', '/api/workspaces/:id/meetings', 'Manager: create a meeting'],
       ['GET', '/api/meetings/:id', 'Read meeting and current turn'],
-      ['GET', '/api/meetings/:id/wait?timeout=20&since=UPDATED_AT', 'Wait for a meeting update'],
+      ['GET', '/api/meetings/:id/wait?timeout=20&compact=1&since=UPDATED_AT', 'Wait for a meeting update'],
       ['POST', '/api/meetings/:id/rounds/:roundId/responses', 'Answer or synthesize with kind and body'],
       ['POST', '/api/meetings/:id/rounds/:roundId/votes', 'Vote for open or blind next'],
       ['POST', '/api/meetings/:id/rounds', 'Manager: start an open, blind, or targeted round'],

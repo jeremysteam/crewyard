@@ -29,9 +29,15 @@ function fakeSql(rows){
   const queries=[];
   const fragment=(text,params=[])=>({text,params,then(resolve,reject){try{
     queries.push({text,params});
-    const table=text.match(/FROM board_private\."([a-z_]+)" WHERE/)?.[1];
+    const table=text.match(/FROM board_private\."?([a-z_]+)"?(?: [a-z]+ JOIN[\s\S]*?)? WHERE/)?.[1];
+    if(text.startsWith('SELECT h.*')){const child=text.match(/board_private\."(job_runs|job_submissions|job_review_decisions)" WHERE/)?.[1];resolve(rows[child]||[]);return;}
+    if(text.startsWith('SELECT c.*')){resolve(rows.comments||[]);return;}
     if(!table)throw new Error('Unexpected query: '+text);
-    resolve(rows[table]||[]);
+    if(text.includes('AS meeting_title')){resolve([]);}
+    else if(text.includes('GROUP BY project_id,status')){
+      const totals=new Map();for(const row of rows.jobs||[]){const key=row.project_id+':'+row.status;totals.set(key,(totals.get(key)||0)+1);}
+      resolve([...totals].map(([key,total])=>{const split=key.lastIndexOf(':');return {project_id:key.slice(0,split),status:key.slice(split+1),total};}));
+    }else resolve(rows[table]||[]);
   }catch(e){reject(e);}}});
   function sql(parts,...values){
     if(typeof parts==='string')return fragment('"'+parts+'"');
@@ -49,11 +55,11 @@ test('announcement polling reads no job, transcript, activity, or credential his
   const result=await loadScoped(sql,options);
   assert.equal(result.announcements[0].body,'Update');
   assert.equal(result.jobs.length,0);
-  assert.deepEqual(queries.map(q=>q.text.match(/FROM board_private\."([a-z_]+)" WHERE/)[1]).sort(),['agents','announcements','sessions','users','workspaces']);
+  assert.deepEqual(queries.map(q=>q.text.match(/FROM board_private\."?([a-z_]+)"? WHERE/)[1]).sort(),['agents','announcements','workspaces']);
   assert.ok(queries.every(q=>q.text.includes(' WHERE ')));
-  assert.ok(queries.find(q=>q.text.includes('"announcements"')).text.includes('workspace_id IN'));
-  assert.ok(queries.find(q=>q.text.includes('"sessions"')).text.includes('expires_at > now()'));
-  assert.ok(!queries.find(q=>q.text.includes('"users"')).text.includes('SELECT *'));
+  assert.ok(queries.find(q=>q.text.includes('board_private.announcements')).text.includes('workspace_id IN'));
+  assert.ok(queries.find(q=>q.text.includes('"agents"')).text.includes('WHERE id='));
+  assert.ok(queries.every(q=>!q.text.includes('board_private.users')));
 });
 
 test('all planned read filters use valid relationships and parameterize input',async()=>{
@@ -130,4 +136,8 @@ test('unchanged meeting wait uses version probes and loads the transcript once a
   assert.equal((await response.json()).timedOut,true);
   assert.ok(probes>=3);
   assert.equal(reads,2,'One authentication read and one transcript read, not a transcript per probe');
+  const previous=reads;
+  const compact=await fetch(url.replace('timeout=2','timeout=1')+'&compact=1',{headers:{authorization:'Bearer agent-token'}});
+  const reply=await compact.json();assert.equal(reply.meeting,null);assert.equal(reply.unchanged,true);assert.equal(reply.updatedAt,db.meetings[0].updatedAt);
+  assert.equal(reads-previous,1,'Compact unchanged timeout reads authentication but no transcript');
 });

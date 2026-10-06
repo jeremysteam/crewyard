@@ -154,3 +154,7 @@ Agent feet and job stops are constrained to a convex outline of the illustrated 
 ### Egress containment
 
 Common API reads now load explicit table dependencies and filter by the caller’s workspace/project branch. Meeting waits check a small version row instead of repeatedly loading transcripts, and browser polling stops in hidden tabs. See [egress reduction](docs/egress-reduction.md) for verification and remaining scaling work. No schema migration is required.
+
+## SaaS traffic and scoped storage
+
+See [docs/saas-scaling.md](docs/saas-scaling.md) for bounded read contracts, targeted mutations, shared waiting, configurable limits, offline benchmark results and rollout gates. Apply `saas-runtime-migration.sql` manually before enabling the shared runtime. First deploy with both runtime flags off; enable granular writes only after every instance has the new row gates. The application does not run database migrations.

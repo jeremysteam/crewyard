@@ -5,7 +5,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     headers: { ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers },
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error=new Error(data.error || `Request failed (${response.status})`) as Error & { status: number; retryAfter: number };
+    error.status=response.status;error.retryAfter=Number(response.headers.get('retry-after')||0);
+    throw error;
+  }
   return data as T;
 }
 

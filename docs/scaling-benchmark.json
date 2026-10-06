@@ -1,0 +1,37 @@
+{
+  "kind": "offline-model",
+  "fixture": {
+    "workspaces": 100,
+    "jobs": 2000,
+    "bodyBytesPerJob": 20000
+  },
+  "snapshotComparison": {
+    "broadResultJsonBytes": 40508251,
+    "scopedResultJsonBytes": 25024,
+    "scopedQueries": 8
+  },
+  "waitScenarios": [
+    {
+      "agents": 25,
+      "baselinePeriodicProbesPerCycle": 25,
+      "sharedPeriodicProbesPerCycle": 1,
+      "totalProbesIncludingWake": 2,
+      "localCoordinatorMs": 1.26
+    },
+    {
+      "agents": 100,
+      "baselinePeriodicProbesPerCycle": 100,
+      "sharedPeriodicProbesPerCycle": 1,
+      "totalProbesIncludingWake": 2,
+      "localCoordinatorMs": 0.96
+    },
+    {
+      "agents": 1000,
+      "baselinePeriodicProbesPerCycle": 1000,
+      "sharedPeriodicProbesPerCycle": 1,
+      "totalProbesIncludingWake": 2,
+      "localCoordinatorMs": 9.62
+    }
+  ],
+  "limits": "Not a PostgreSQL throughput benchmark or measured Supabase egress. Excludes protocol, auth, version and budget query bytes. Does not prove 1,000 productive agents or browser avatars. Broad snapshot is a comparison model, not a measurement of the last deployed patch."
+}
